@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terminal AI 🤖</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        
+        * { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+        
+        @keyframes messageSlide {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        @keyframes typing {
+            0%, 60%, 100% { transform: translateY(0); }
+            30% { transform: translateY(-6px); }
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .message-animate { animation: messageSlide 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+        
+        .typing-dot {
+            width: 6px; height: 6px;
+            background: #10b981;
+            border-radius: 50%;
+            animation: typing 1.4s ease-in-out infinite;
+        }
+        
+        .typing-dot:nth-child(2) { animation-delay: 0.16s; }
+        .typing-dot:nth-child(3) { animation-delay: 0.32s; }
+        
+        .scrollbar-thin::-webkit-scrollbar { width: 6px; }
+        .scrollbar-thin::-webkit-scrollbar-track { background: #0f172a; }
+        .scrollbar-thin::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+        .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: #475569; }
+        
+        .glass-effect {
+            background: rgba(30, 41, 59, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(71, 85, 105, 0.5);
+        }
+        
+        .message-bubble {
+            max-width: 85%;
+            padding: 14px 18px;
+            border-radius: 16px;
+            font-size: 15px;
+            line-height: 1.6;
+            word-wrap: break-word;
+        }
+        
+        .message-bubble.user {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            border-bottom-right-radius: 4px;
+            box-shadow: 0 2px 8px rgba(16, 185, 129, 0.2);
+        }
+        
+        .message-bubble.assistant {
+            background: #1e293b;
+            color: #e2e8f0;
+            border-bottom-left-radius: 4px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        .rag-context {
+            background: rgba(16, 185, 129, 0.08);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+            border-radius: 10px;
+            padding: 12px;
+            margin-top: 10px;
+            font-size: 13px;
+        }
+        
+        .rag-doc-item {
+            background: rgba(15, 23, 42, 0.6);
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin: 6px 0;
+            font-size: 12px;
+            color: #94a3b8;
+            border-left: 2px solid #10b981;
+        }
+        
+        .input-field {
+            background: #0f172a;
+            border: 1.5px solid #334155;
+            border-radius: 12px;
+            padding: 14px 16px;
+            color: #e2e8f0;
+            font-size: 15px;
+            transition: all 0.2s ease;
+        }
+        
+        .input-field:focus {
+            outline: none;
+            border-color: #10b981;
+            box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            border-radius: 12px;
+            padding: 14px 24px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+        }
+        
+        .btn-primary:active {
+            transform: translateY(0);
+        }
+        
+        .btn-secondary {
+            background: #1e293b;
+            color: #e2e8f0;
+            border: 1.5px solid #334155;
+            border-radius: 12px;
+            padding: 14px 24px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+        
+        .btn-secondary:hover {
+            background: #334155;
+            border-color: #475569;
+        }
+        
+        .card {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+        }
+        
+        .skill-card {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 10px;
+            padding: 14px 16px;
+            margin: 8px 0;
+            border-left: 3px solid #10b981;
+            transition: all 0.2s ease;
+            cursor: pointer;
+        }
+        
+        .skill-card:hover {
+            background: #1e293b;
+            transform: translateX(4px);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
+        
+        .sidebar {
+            transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        
+        @media (max-width: 1024px) {
+            .sidebar { position: fixed; top: 0; right: 0; height: 100vh; width: 320px; z-index: 50; }
+            .sidebar.hidden { transform: translateX(100%); }
+            .sidebar-overlay { display: none; }
+            .sidebar-overlay.show { display: block; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 40; }
+        }
+        
+        @media (min-width: 1025px) {
+            .sidebar-overlay { display: none !important; }
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+    <!-- Login Screen -->
+    <div id="loginScreen" class="min-h-screen flex items-center justify-center p-4">
+        <div class="card w-full max-w-md p-8">
+            <div class="text-center mb-8">
+                <div class="text-5xl mb-4">🤖</div>
+                <h1 class="text-3xl font-bold bg-gradient-to-r from-emerald-400 to-emerald-600 bg-clip-text text-transparent mb-2">
+                    Terminal AI
+                </h1>
+                <p class="text-slate-400 text-sm">Secure AI assistant for your notes</p>
+            </div>
+            
+            <div id="loginError" class="hidden mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm"></div>
+            
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-slate-400 mb-2">Username</label>
+                    <input type="text" id="username" placeholder="Enter your username" 
+                           class="input-field w-full" autocomplete="username">
+                </div>
+                
+                <div>
+                    <label class="block text-sm font-medium text-slate-400 mb-2">Password</label>
+                    <input type="password" id="password" placeholder="Enter your password" 
+                           class="input-field w-full" autocomplete="current-password">
+                </div>
+                
+                <button onclick="login()" class="btn-primary w-full flex items-center justify-center gap-2">
+                    <span id="loginIcon">🔐</span>
+                    <span id="loginText">Sign In</span>
+                </button>
+            </div>
+            
+            <p class="text-center text-slate-500 text-xs mt-6">
+                🔒 Secure • 🔐 Encrypted • 🛡️ Private
+            </p>
+        </div>
+    </div>
+    
+    <!-- Main Chat Interface -->
+    <div id="mainApp" class="hidden min-h-screen flex flex-col">
+        <!-- Header -->
+        <header class="glass-effect sticky top-0 z-30 px-4 py-3 lg:px-6">
+            <div class="flex items-center justify-between max-w-7xl mx-auto">
+                <div class="flex items-center gap-3">
+                    <button id="mobileMenuBtn" onclick="toggleSidebar()" class="lg:hidden p-2 rounded-xl hover:bg-slate-800 transition-colors">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+                        </svg>
+                    </button>
+                    <div class="flex items-center gap-2">
+                        <span class="text-2xl">🤖</span>
+                        <h1 class="text-xl font-bold bg-gradient-to-r from-emerald-400 to-emerald-600 bg-clip-text text-transparent hidden sm:block">
+                            Terminal AI
+                        </h1>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span id="currentUser" class="text-sm text-slate-400 hidden sm:inline"></span>
+                    <button onclick="logout()" class="btn-secondary text-sm px-4 py-2 flex items-center gap-2">
+                        <span>🚪</span>
+                        <span class="hidden sm:inline">Logout</span>
+                    </button>
+                </div>
+            </div>
+        </header>
+        
+        <!-- Main Content -->
+        <div class="flex-1 flex flex-col lg:flex-row max-w-7xl mx-auto w-full p-4 gap-4">
+            <!-- Chat Area -->
+            <div class="flex-1 flex flex-col card overflow-hidden min-h-0">
+                <!-- Messages -->
+                <div id="chatMessages" class="flex-1 overflow-y-auto scrollbar-thin p-4 space-y-4">
+                    <div class="message-animate message-bubble assistant">
+                        👋 Welcome to Terminal AI! I'm ready to help you with your notes and documents.
+                    </div>
+                </div>
+                
+                <!-- Input Area -->
+                <div class="border-t border-slate-700 p-4 bg-slate-900/50">
+                    <div class="flex gap-3 items-end">
+                        <input type="text" id="messageInput" 
+                               placeholder="Ask me anything about your notes..." 
+                               class="input-field flex-1 resize-none" 
+                               onkeypress="if(event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage(); }">
+                        <select id="providerSelect" class="input-field cursor-pointer">
+                            <option value="openrouter">🌐 OpenRouter</option>
+                            <option value="gemini">🧠 Gemini</option>
+                            <option value="groq">⚡ Groq</option>
+                        </select>
+                        <button onclick="sendMessage()" class="btn-primary px-5 py-3 flex items-center gap-2">
+                            <span id="sendIcon">📤</span>
+                            <span class="hidden sm:inline">Send</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Sidebar -->
+            <div id="sidebarOverlay" class="sidebar-overlay" onclick="closeSidebar()"></div>
+            <div id="sidebar" class="sidebar w-full lg:w-96 flex flex-col gap-4 overflow-y-auto lg:overflow-visible hidden lg:flex">
+                <!-- Quick Stats -->
+                <div class="card p-5">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <span class="text-emerald-400">⚡</span>
+                        Quick Stats
+                    </h3>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="bg-slate-800/50 rounded-xl p-4 text-center">
+                            <div class="text-3xl font-bold text-emerald-400" id="ragDocCount">-</div>
+                            <div class="text-xs text-slate-400 mt-1">Indexed Docs</div>
+                        </div>
+                        <div class="bg-slate-800/50 rounded-xl p-4 text-center">
+                            <div class="text-3xl font-bold text-emerald-400" id="skillCount">-</div>
+                            <div class="text-xs text-slate-400 mt-1">Skills</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Skills -->
+                <div class="card p-5">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <span class="text-emerald-400">🎯</span>
+                        Active Skills
+                    </h3>
+                    <div id="skillsList">
+                        <div class="flex items-center gap-2 text-slate-400">
+                            <div class="w-4 h-4 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin"></div>
+                            <span class="text-sm">Loading...</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- RAG Status -->
+                <div class="card p-5">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <span class="text-emerald-400">📚</span>
+                        RAG Status
+                    </h3>
+                    <div class="space-y-3 text-sm">
+                        <div class="flex justify-between items-center">
+                            <span class="text-slate-400">Index Status</span>
+                            <span id="ragIndexStatus" class="text-emerald-400">Loading...</span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span class="text-slate-400">Last Updated</span>
+                            <span id="ragLastUpdate" class="text-slate-500">-</span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <span class="text-slate-400">AI Provider</span>
+                            <span class="text-emerald-400">Active</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Close Sidebar Button (Mobile) -->
+                <button onclick="closeSidebar()" class="lg:hidden btn-secondary w-full">
+                    Close
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let token = localStorage.getItem('token');
+        let username = localStorage.getItem('username');
+        let chatHistory = [];
+        let isLoading = false;
+        let sidebarOpen = false;
+        const API_BASE = window.location.origin;
+        
+        function checkAuth() {
+            const storedToken = localStorage.getItem('token');
+            const storedUsername = localStorage.getItem('username');
+            console.log('Checking auth, token:', storedToken ? 'exists' : 'none', 'username:', storedUsername);
+            
+            if (storedToken) {
+                token = storedToken;
+                username = storedUsername;
+                document.getElementById('loginScreen').classList.add('hidden');
+                document.getElementById('mainApp').classList.remove('hidden');
+                document.getElementById('currentUser').textContent = `👤 ${username}`;
+                loadDashboard();
+            }
+        }
+        
+        async function login() {
+            const inputUsername = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value.trim();
+            
+            if (!inputUsername || !password) {
+                showError('Please enter username and password');
+                return;
+            }
+            
+            const btn = document.querySelector('#loginScreen .btn-primary');
+            btn.disabled = true;
+            btn.innerHTML = '<div class="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>';
+            
+            try {
+                const response = await fetch(API_BASE + '/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: inputUsername, password })
+                });
+                
+                const text = await response.text();
+                console.log('Login response:', text);
+                
+                let data;
+                try {
+                    data = JSON.parse(text);
+                } catch (e) {
+                    console.error('Failed to parse response:', e);
+                    showError('Invalid response from server');
+                    return;
+                }
+                
+                if (!response.ok) {
+                    showError(data.error || 'Login failed');
+                    return;
+                }
+                
+                if (data.token) {
+                    token = data.token;
+                    username = data.username;
+                    localStorage.setItem('token', token);
+                    localStorage.setItem('username', username);
+                    checkAuth();
+                } else {
+                    showError(data.error || 'No token received');
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                showError('Connection error: ' + error.message);
+            }
+            
+            btn.disabled = false;
+            btn.innerHTML = '<span>🔐</span><span>Sign In</span>';
+        }
+        
+        function showError(message) {
+            const errorDiv = document.getElementById('loginError');
+            errorDiv.textContent = '❌ ' + message;
+            errorDiv.classList.remove('hidden');
+            setTimeout(() => errorDiv.classList.add('hidden'), 5000);
+        }
+        
+        function logout() {
+            fetch(API_BASE + '/api/logout', {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+            localStorage.removeItem('token');
+            localStorage.removeItem('username');
+            token = null;
+            location.reload();
+        }
+        
+        function addMessage(role, content, ragContext = null) {
+            const messagesDiv = document.getElementById('chatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message-bubble ' + role + ' message-animate';
+            
+            let html = formatContent(content);
+            
+            if (ragContext) {
+                html += `
+                    <div class="rag-context">
+                        <div class="flex items-center gap-2 font-semibold text-emerald-400 mb-2 text-sm">
+                            <span>📚</span>
+                            <span>Relevant Documents Found</span>
+                        </div>
+                        ${ragContext}
+                    </div>
+                `;
+            }
+            
+            messageDiv.innerHTML = html;
+            messagesDiv.appendChild(messageDiv);
+            
+            setTimeout(() => {
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            }, 50);
+        }
+        
+        function showTypingIndicator() {
+            const messagesDiv = document.getElementById('chatMessages');
+            const typingDiv = document.createElement('div');
+            typingDiv.id = 'typingIndicator';
+            typingDiv.className = 'message-bubble assistant message-animate';
+            typingDiv.innerHTML = `
+                <div class="flex items-center gap-2">
+                    <div class="flex gap-1">
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                    </div>
+                    <span class="text-slate-400 text-sm">AI is typing...</span>
+                </div>
+            `;
+            messagesDiv.appendChild(typingDiv);
+            setTimeout(() => {
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            }, 50);
+        }
+        
+        function hideTypingIndicator() {
+            const typingIndicator = document.getElementById('typingIndicator');
+            if (typingIndicator) {
+                typingIndicator.remove();
+            }
+        }
+        
+        function formatContent(content) {
+            return content
+                .replace(/\n/g, '<br>')
+                .replace(/\*\*(.*?)\*\*/g, '<strong class="text-emerald-300">$1</strong>')
+                .replace(/`([^`]+)`/g, '<code class="bg-slate-800 px-2 py-1 rounded text-sm text-emerald-400">$1</code>')
+                .replace(/```([\s\S]*?)```/g, '<pre class="bg-slate-800 p-3 rounded-lg mt-2 mb-2 overflow-x-auto text-sm"><code>$1</code></pre>');
+        }
+        
+        async function sendMessage() {
+            if (isLoading) return;
+            
+            const message = document.getElementById('messageInput').value.trim();
+            if (!message) return;
+            
+            isLoading = true;
+            const input = document.getElementById('messageInput');
+            const sendBtn = document.querySelector('#mainApp .btn-primary');
+            const provider = document.getElementById('providerSelect').value;
+            
+            input.disabled = true;
+            sendBtn.disabled = true;
+            sendBtn.innerHTML = '<div class="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>';
+            
+            addMessage('user', message);
+            chatHistory.push({ role: 'user', content: message });
+            input.value = '';
+            
+            showTypingIndicator();
+            
+            try {
+                const response = await fetch(API_BASE + '/api/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({ message, provider, history: chatHistory })
+                });
+                
+                const text = await response.text();
+                console.log('Chat response:', text);
+                
+                let data;
+                try {
+                    data = JSON.parse(text);
+                } catch (e) {
+                    console.error('Failed to parse response:', e);
+                    addMessage('assistant', '❌ Invalid response from server');
+                    return;
+                }
+                
+                hideTypingIndicator();
+                
+                if (data.response) {
+                    addMessage('assistant', data.response);
+                    chatHistory.push({ role: 'assistant', content: data.response });
+                } else {
+                    addMessage('assistant', '❌ ' + (data.error || 'Failed to get response'));
+                }
+            } catch (error) {
+                hideTypingIndicator();
+                addMessage('assistant', '❌ Sorry, I encountered an error. Please try again.');
+            }
+            
+            isLoading = false;
+            input.disabled = false;
+            sendBtn.disabled = false;
+            sendBtn.innerHTML = '<span id="sendIcon">📤</span><span class="hidden sm:inline">Send</span>';
+            input.focus();
+        }
+        
+        function toggleSidebar() {
+            sidebarOpen = !sidebarOpen;
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebarOverlay');
+            
+            if (sidebarOpen) {
+                sidebar.classList.remove('hidden');
+                overlay.classList.add('show');
+            } else {
+                sidebar.classList.add('hidden');
+                overlay.classList.remove('show');
+            }
+        }
+        
+        function closeSidebar() {
+            sidebarOpen = false;
+            document.getElementById('sidebar').classList.add('hidden');
+            document.getElementById('sidebarOverlay').classList.remove('show');
+        }
+        
+        async function loadDashboard() {
+            await Promise.all([loadSkills(), loadRAGStats()]);
+        }
+        
+        async function loadSkills() {
+            try {
+                const response = await fetch('/api/skills', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                const data = await response.json();
+                
+                const skillsList = document.getElementById('skillsList');
+                document.getElementById('skillCount').textContent = data.length || 0;
+                
+                if (!data || data.length === 0) {
+                    skillsList.innerHTML = '<p class="text-slate-500 text-sm">No skills available</p>';
+                    return;
+                }
+                
+                skillsList.innerHTML = data.map(skill => `
+                    <div class="skill-card" onclick="useSkill('${skill.name}')">
+                        <div class="font-semibold text-emerald-400 text-sm">🎯 ${skill.name}</div>
+                        <div class="text-xs text-slate-400 mt-1">${skill.description}</div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Failed to load skills:', error);
+                document.getElementById('skillsList').innerHTML = '<p class="text-slate-500 text-sm">Failed to load skills</p>';
+            }
+        }
+        
+        async function loadRAGStats() {
+            try {
+                const response = await fetch('/api/rag/search', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({ query: 'test' })
+                });
+                
+                const data = await response.json();
+                const docCount = data.results ? data.results.length : (data.count || 0);
+                document.getElementById('ragDocCount').textContent = docCount > 0 ? docCount : '-';
+                document.getElementById('ragIndexStatus').textContent = docCount > 0 ? '✅ Active' : '⚠️ No docs';
+                document.getElementById('ragLastUpdate').textContent = new Date().toLocaleTimeString();
+            } catch (error) {
+                document.getElementById('ragDocCount').textContent = '?';
+                document.getElementById('ragIndexStatus').textContent = '⚠️ Error';
+            }
+        }
+        
+        function useSkill(skillName) {
+            document.getElementById('messageInput').value = `${skillName}: `;
+            document.getElementById('messageInput').focus();
+        }
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(() => {
+                document.getElementById('messageInput').focus();
+            }, 500);
+            checkAuth();
+        });
+        
+        document.getElementById('messageInput').addEventListener('input', function(e) {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+        });
+    </script>
+</body>
+</html>

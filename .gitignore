@@ -1,0 +1,15 @@
+.env
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.sum
+.terminal-ai/
+config/terminal-ai/
+docs/
+terminal-ai
+terminal-ai.exe
+
