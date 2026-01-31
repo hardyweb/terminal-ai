@@ -67,7 +67,7 @@ Index dan cari nota-nota lokal anda:
 ./terminal-ai rag search "quantum computing"
 ```
 
-Nota akan disimpan di `~/.terminal-ai/rag-index.json`
+Nota akan disimpan di `$XDG_DATA_HOME/terminal-ai/rag-index.json` (jika `$XDG_DATA_HOME` diset) atau `$HOME/.local/share/terminal-ai/rag-index.json`
 
 ### Skills System
 
@@ -141,7 +141,7 @@ Contoh workflow:
 ## Directories
 
 - `~/.terminal-ai/skills/` - Custom skills
-- `~/.terminal-ai/rag-index.json` - RAG index cache
+- `$XDG_DATA_HOME/terminal-ai/rag-index.json` atau `$HOME/.local/share/terminal-ai/rag-index.json` - RAG index cache
 - `.env` - API keys dan configuration
 
 ## Environment Variables

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -68,6 +69,38 @@ type Skill struct {
 
 var ragIndex RAGIndex
 var providers map[string]AIProvider
+var useGopass bool
+
+func getSecretFromGopass(path string) (string, error) {
+	cmd := exec.Command("gopass", "show", path)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("gopass show failed: %w", err)
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+func getEnvOrGopass(envVar, gopassPath string) string {
+	val := os.Getenv(envVar)
+	if val != "" && !strings.HasPrefix(val, "gopass:") {
+		return val
+	}
+
+	if strings.HasPrefix(val, "gopass:") {
+		path := strings.TrimPrefix(val, "gopass:")
+		if secret, err := getSecretFromGopass(path); err == nil {
+			return secret
+		}
+	}
+
+	if useGopass && gopassPath != "" {
+		if secret, err := getSecretFromGopass(gopassPath); err == nil {
+			return secret
+		}
+	}
+
+	return ""
+}
 
 func main() {
 	homeDir, _ := os.UserHomeDir()
@@ -75,6 +108,8 @@ func main() {
 
 	godotenv.Load(filepath.Join(configPath, ".env"))
 	godotenv.Load(".env")
+
+	useGopass = os.Getenv("USE_GOPASS") == "true"
 
 	initProviders()
 	securityMgr = initSecurityManager()
@@ -119,19 +154,19 @@ func initProviders() {
 	providers = map[string]AIProvider{
 		"openrouter": {
 			Name:     "openrouter",
-			APIKey:   os.Getenv("OPENROUTER_API_KEY"),
+			APIKey:   getEnvOrGopass("OPENROUTER_API_KEY", "terminal-ai/openrouter_api_key"),
 			Endpoint: os.Getenv("OPENROUTER_ENDPOINT"),
 			Model:    os.Getenv("OPENROUTER_MODEL"),
 		},
 		"gemini": {
 			Name:     "gemini",
-			APIKey:   os.Getenv("GEMINI_API_KEY"),
+			APIKey:   getEnvOrGopass("GEMINI_API_KEY", "terminal-ai/gemini_api_key"),
 			Endpoint: os.Getenv("GEMINI_ENDPOINT"),
 			Model:    os.Getenv("GEMINI_MODEL"),
 		},
 		"groq": {
 			Name:     "groq",
-			APIKey:   os.Getenv("GROQ_API_KEY"),
+			APIKey:   getEnvOrGopass("GROQ_API_KEY", "terminal-ai/groq_api_key"),
 			Endpoint: os.Getenv("GROQ_ENDPOINT"),
 			Model:    os.Getenv("GROQ_MODEL"),
 		},
