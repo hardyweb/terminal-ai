@@ -138,9 +138,17 @@ func initProviders() {
 	}
 }
 
-func loadRAGIndex() {
+func getDataDir() string {
+	if xdgData := os.Getenv("XDG_DATA_HOME"); xdgData != "" {
+		return filepath.Join(xdgData, "terminal-ai")
+	}
 	homeDir, _ := os.UserHomeDir()
-	indexFile := filepath.Join(homeDir, configDir, "rag-index.json")
+	return filepath.Join(homeDir, ".local", "share", "terminal-ai")
+}
+
+func loadRAGIndex() {
+	dataDir := getDataDir()
+	indexFile := filepath.Join(dataDir, "rag-index.json")
 
 	data, err := os.ReadFile(indexFile)
 	if err != nil {
@@ -152,8 +160,10 @@ func loadRAGIndex() {
 }
 
 func saveRAGIndex() error {
-	homeDir, _ := os.UserHomeDir()
-	indexFile := filepath.Join(homeDir, configDir, "rag-index.json")
+	dataDir := getDataDir()
+	indexFile := filepath.Join(dataDir, "rag-index.json")
+
+	os.MkdirAll(dataDir, 0755)
 
 	data, err := json.MarshalIndent(ragIndex, "", "  ")
 	if err != nil {

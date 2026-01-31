@@ -20,7 +20,7 @@ go mod tidy
 ## Build
 
 ```bash
-go build -o terminal-ai main.go
+go build -o terminal-ai . 
 ```
 
 ## Penggunaan
