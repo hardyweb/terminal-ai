@@ -11,6 +11,141 @@
         
         * { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
         
+        :root {
+            --bg-primary: #020617;
+            --bg-secondary: #0f172a;
+            --bg-card: #1e293b;
+            --bg-input: #0f172a;
+            --border-color: #334155;
+            --border-hover: #475569;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent-primary: #10b981;
+            --accent-primary-dark: #059669;
+            --accent-gradient: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            --accent-300: #34d399;
+            --message-user-bg: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            --message-assistant-bg: #1e293b;
+            --scrollbar-track: #0f172a;
+            --scrollbar-thumb: #334155;
+            --scrollbar-thumb-hover: #475569;
+            --glass-bg: rgba(30, 41, 59, 0.8);
+            --glass-border: rgba(71, 85, 105, 0.5);
+            --rag-context-bg: rgba(16, 185, 129, 0.08);
+            --rag-context-border: rgba(16, 185, 129, 0.2);
+            --rag-doc-bg: rgba(15, 23, 42, 0.6);
+            --rag-doc-border: #10b981;
+        }
+
+        [data-theme="light"] {
+            --bg-primary: #f8fafc;
+            --bg-secondary: #f1f5f9;
+            --bg-card: #ffffff;
+            --bg-input: #f1f5f9;
+            --border-color: #e2e8f0;
+            --border-hover: #cbd5e1;
+            --text-primary: #1e293b;
+            --text-secondary: #64748b;
+            --text-muted: #94a3b8;
+            --accent-primary: #0ea5e9;
+            --accent-primary-dark: #0284c7;
+            --accent-gradient: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+            --accent-300: #38bdf8;
+            --message-user-bg: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+            --message-assistant-bg: #f8fafc;
+            --scrollbar-track: #f1f5f9;
+            --scrollbar-thumb: #cbd5e1;
+            --scrollbar-thumb-hover: #94a3b8;
+            --glass-bg: rgba(255, 255, 255, 0.8);
+            --glass-border: rgba(203, 213, 225, 0.5);
+            --rag-context-bg: rgba(14, 165, 233, 0.08);
+            --rag-context-border: rgba(14, 165, 233, 0.2);
+            --rag-doc-bg: rgba(241, 245, 249, 0.6);
+            --rag-doc-border: #0ea5e9;
+        }
+
+        [data-theme="midnight"] {
+            --bg-primary: #0a0e27;
+            --bg-secondary: #1a1f3a;
+            --bg-card: #242945;
+            --bg-input: #1a1f3a;
+            --border-color: #3d4472;
+            --border-hover: #4f56a0;
+            --text-primary: #e4e7ff;
+            --text-secondary: #a0a5d6;
+            --text-muted: #6d72a0;
+            --accent-primary: #a78bfa;
+            --accent-primary-dark: #8b5cf6;
+            --accent-gradient: linear-gradient(135deg, #a78bfa 0%, #8b5cf6 100%);
+            --accent-300: #c4b5fd;
+            --message-user-bg: linear-gradient(135deg, #a78bfa 0%, #8b5cf6 100%);
+            --message-assistant-bg: #242945;
+            --scrollbar-track: #1a1f3a;
+            --scrollbar-thumb: #3d4472;
+            --scrollbar-thumb-hover: #4f56a0;
+            --glass-bg: rgba(36, 41, 69, 0.8);
+            --glass-border: rgba(61, 68, 114, 0.5);
+            --rag-context-bg: rgba(167, 139, 250, 0.08);
+            --rag-context-border: rgba(167, 139, 250, 0.2);
+            --rag-doc-bg: rgba(26, 31, 58, 0.6);
+            --rag-doc-border: #a78bfa;
+        }
+
+        [data-theme="sunset"] {
+            --bg-primary: #1a0a0a;
+            --bg-secondary: #2d1b1b;
+            --bg-card: #402525;
+            --bg-input: #2d1b1b;
+            --border-color: #6b4a4a;
+            --border-hover: #8b5a5a;
+            --text-primary: #ffe4e4;
+            --text-secondary: #d4b8b8;
+            --text-muted: #a88c8c;
+            --accent-primary: #f97316;
+            --accent-primary-dark: #ea580c;
+            --accent-gradient: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+            --accent-300: #fdba74;
+            --message-user-bg: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+            --message-assistant-bg: #402525;
+            --scrollbar-track: #2d1b1b;
+            --scrollbar-thumb: #6b4a4a;
+            --scrollbar-thumb-hover: #8b5a5a;
+            --glass-bg: rgba(64, 37, 37, 0.8);
+            --glass-border: rgba(107, 74, 74, 0.5);
+            --rag-context-bg: rgba(249, 115, 22, 0.08);
+            --rag-context-border: rgba(249, 115, 22, 0.2);
+            --rag-doc-bg: rgba(45, 27, 27, 0.6);
+            --rag-doc-border: #f97316;
+        }
+
+        [data-theme="forest"] {
+            --bg-primary: #0a1a0a;
+            --bg-secondary: #0f2a0f;
+            --bg-card: #1a3a1a;
+            --bg-input: #0f2a0f;
+            --border-color: #2d5a2d;
+            --border-hover: #3d7a3d;
+            --text-primary: #e4ffe4;
+            --text-secondary: #b8e4b8;
+            --text-muted: #8cc48c;
+            --accent-primary: #22c55e;
+            --accent-primary-dark: #16a34a;
+            --accent-gradient: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+            --accent-300: #4ade80;
+            --message-user-bg: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+            --message-assistant-bg: #1a3a1a;
+            --scrollbar-track: #0f2a0f;
+            --scrollbar-thumb: #2d5a2d;
+            --scrollbar-thumb-hover: #3d7a3d;
+            --glass-bg: rgba(26, 58, 26, 0.8);
+            --glass-border: rgba(45, 90, 45, 0.5);
+            --rag-context-bg: rgba(34, 197, 94, 0.08);
+            --rag-context-border: rgba(34, 197, 94, 0.2);
+            --rag-doc-bg: rgba(15, 42, 15, 0.6);
+            --rag-doc-border: #22c55e;
+        }
+
         @keyframes messageSlide {
             from { opacity: 0; transform: translateY(12px); }
             to { opacity: 1; transform: translateY(0); }
@@ -30,7 +165,7 @@
         
         .typing-dot {
             width: 6px; height: 6px;
-            background: #10b981;
+            background: var(--accent-primary);
             border-radius: 50%;
             animation: typing 1.4s ease-in-out infinite;
         }
@@ -39,14 +174,14 @@
         .typing-dot:nth-child(3) { animation-delay: 0.32s; }
         
         .scrollbar-thin::-webkit-scrollbar { width: 6px; }
-        .scrollbar-thin::-webkit-scrollbar-track { background: #0f172a; }
-        .scrollbar-thin::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
-        .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: #475569; }
+        .scrollbar-thin::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+        .scrollbar-thin::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+        .scrollbar-thin::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
         
         .glass-effect {
-            background: rgba(30, 41, 59, 0.8);
+            background: var(--glass-bg);
             backdrop-filter: blur(12px);
-            border: 1px solid rgba(71, 85, 105, 0.5);
+            border: 1px solid var(--glass-border);
         }
         
         .message-bubble {
@@ -59,22 +194,22 @@
         }
         
         .message-bubble.user {
-            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            background: var(--message-user-bg);
             color: white;
             border-bottom-right-radius: 4px;
             box-shadow: 0 2px 8px rgba(16, 185, 129, 0.2);
         }
         
         .message-bubble.assistant {
-            background: #1e293b;
-            color: #e2e8f0;
+            background: var(--message-assistant-bg);
+            color: var(--text-primary);
             border-bottom-left-radius: 4px;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
         }
         
         .rag-context {
-            background: rgba(16, 185, 129, 0.08);
-            border: 1px solid rgba(16, 185, 129, 0.2);
+            background: var(--rag-context-bg);
+            border: 1px solid var(--rag-context-border);
             border-radius: 10px;
             padding: 12px;
             margin-top: 10px;
@@ -82,44 +217,44 @@
         }
         
         .rag-doc-item {
-            background: rgba(15, 23, 42, 0.6);
+            background: var(--rag-doc-bg);
             padding: 8px 12px;
             border-radius: 6px;
             margin: 6px 0;
             font-size: 12px;
-            color: #94a3b8;
-            border-left: 2px solid #10b981;
+            color: var(--text-secondary);
+            border-left: 2px solid var(--rag-doc-border);
         }
         
         .input-field {
-            background: #0f172a;
-            border: 1.5px solid #334155;
+            background: var(--bg-input);
+            border: 1.5px solid var(--border-color);
             border-radius: 12px;
             padding: 14px 16px;
-            color: #e2e8f0;
+            color: var(--text-primary);
             font-size: 15px;
             transition: all 0.2s ease;
         }
         
         .input-field:focus {
             outline: none;
-            border-color: #10b981;
-            box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary), transparent 90%);
         }
         
         .btn-primary {
-            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            background: var(--accent-gradient);
             color: white;
             border-radius: 12px;
             padding: 14px 24px;
             font-weight: 500;
             transition: all 0.2s ease;
-            box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+            box-shadow: 0 2px 8px color-mix(in srgb, var(--accent-primary), transparent 70%);
         }
         
         .btn-primary:hover {
             transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+            box-shadow: 0 4px 12px color-mix(in srgb, var(--accent-primary), transparent 60%);
         }
         
         .btn-primary:active {
@@ -127,9 +262,9 @@
         }
         
         .btn-secondary {
-            background: #1e293b;
-            color: #e2e8f0;
-            border: 1.5px solid #334155;
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border: 1.5px solid var(--border-color);
             border-radius: 12px;
             padding: 14px 24px;
             font-weight: 500;
@@ -137,30 +272,30 @@
         }
         
         .btn-secondary:hover {
-            background: #334155;
-            border-color: #475569;
+            background: var(--border-color);
+            border-color: var(--border-hover);
         }
         
         .card {
-            background: #1e293b;
-            border: 1px solid #334155;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
             border-radius: 16px;
             box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
         }
         
         .skill-card {
-            background: #0f172a;
-            border: 1px solid #334155;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
             border-radius: 10px;
             padding: 14px 16px;
             margin: 8px 0;
-            border-left: 3px solid #10b981;
+            border-left: 3px solid var(--accent-primary);
             transition: all 0.2s ease;
             cursor: pointer;
         }
         
         .skill-card:hover {
-            background: #1e293b;
+            background: var(--bg-card);
             transform: translateX(4px);
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
         }
@@ -179,6 +314,29 @@
         @media (min-width: 1025px) {
             .sidebar-overlay { display: none !important; }
         }
+
+        body {
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+        }
+
+        .bg-slate-950 { background-color: var(--bg-primary); }
+        .bg-slate-900 { background-color: var(--bg-secondary); }
+        .bg-slate-800 { background-color: var(--bg-card); }
+        .text-slate-100 { color: var(--text-primary); }
+        .text-slate-200 { color: var(--text-primary); }
+        .text-slate-300 { color: var(--text-primary); }
+        .text-slate-400 { color: var(--text-secondary); }
+        .text-slate-500 { color: var(--text-muted); }
+        .border-slate-700 { border-color: var(--border-color); }
+        .text-emerald-400 { color: var(--accent-300); }
+        .text-emerald-300 { color: var(--accent-300); }
+        .from-emerald-400 { --tw-gradient-from: var(--accent-primary); }
+        .to-emerald-600 { --tw-gradient-to: var(--accent-primary-dark); }
+        .bg-emerald-500\/20 { background-color: color-mix(in srgb, var(--accent-primary), transparent 80%); }
+        .bg-emerald-500\/10 { background-color: color-mix(in srgb, var(--accent-primary), transparent 90%); }
+        .text-emerald-500 { color: var(--accent-primary); }
+        .bg-slate-800\/50 { background-color: color-mix(in srgb, var(--bg-card), transparent 50%); }
     </style>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen">
@@ -351,6 +509,36 @@
                     </div>
                 </div>
 
+                <!-- Theme Settings -->
+                <div class="card p-5">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <span class="text-emerald-400">🎨</span>
+                        Theme
+                    </h3>
+                    <div class="grid grid-cols-5 gap-2">
+                        <button onclick="setTheme('dark')" class="theme-btn p-2 rounded-lg border border-slate-700 hover:border-emerald-500 transition-all" data-theme="dark" title="Dark">
+                            <div class="w-full h-8 rounded bg-gradient-to-br from-slate-900 to-slate-700"></div>
+                            <div class="text-xs text-center mt-1 text-slate-400">Dark</div>
+                        </button>
+                        <button onclick="setTheme('light')" class="theme-btn p-2 rounded-lg border border-slate-700 hover:border-emerald-500 transition-all" data-theme="light" title="Light">
+                            <div class="w-full h-8 rounded bg-gradient-to-br from-slate-100 to-slate-300"></div>
+                            <div class="text-xs text-center mt-1 text-slate-400">Light</div>
+                        </button>
+                        <button onclick="setTheme('midnight')" class="theme-btn p-2 rounded-lg border border-slate-700 hover:border-emerald-500 transition-all" data-theme="midnight" title="Midnight">
+                            <div class="w-full h-8 rounded bg-gradient-to-br from-purple-900 to-indigo-800"></div>
+                            <div class="text-xs text-center mt-1 text-slate-400">Midnight</div>
+                        </button>
+                        <button onclick="setTheme('sunset')" class="theme-btn p-2 rounded-lg border border-slate-700 hover:border-emerald-500 transition-all" data-theme="sunset" title="Sunset">
+                            <div class="w-full h-8 rounded bg-gradient-to-br from-red-900 to-orange-700"></div>
+                            <div class="text-xs text-center mt-1 text-slate-400">Sunset</div>
+                        </button>
+                        <button onclick="setTheme('forest')" class="theme-btn p-2 rounded-lg border border-slate-700 hover:border-emerald-500 transition-all" data-theme="forest" title="Forest">
+                            <div class="w-full h-8 rounded bg-gradient-to-br from-green-900 to-green-700"></div>
+                            <div class="text-xs text-center mt-1 text-slate-400">Forest</div>
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Settings -->
                 <div class="card p-5">
                     <button onclick="openSettings()" class="w-full btn-secondary flex items-center justify-center gap-2">
@@ -386,6 +574,36 @@
             </div>
 
             <div class="p-6 flex-1 overflow-y-auto">
+                <!-- Theme Settings -->
+                <div class="mb-8">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <span class="text-emerald-400">🎨</span>
+                        <span>Theme Settings</span>
+                    </h3>
+                    <div class="grid grid-cols-5 gap-3">
+                        <button onclick="setTheme('dark')" class="theme-btn p-3 rounded-xl border border-slate-700 hover:border-emerald-500 transition-all flex flex-col items-center" data-theme="dark">
+                            <div class="w-12 h-12 rounded-lg bg-gradient-to-br from-slate-900 to-slate-700 mb-2"></div>
+                            <span class="text-sm text-slate-400">Dark</span>
+                        </button>
+                        <button onclick="setTheme('light')" class="theme-btn p-3 rounded-xl border border-slate-700 hover:border-emerald-500 transition-all flex flex-col items-center" data-theme="light">
+                            <div class="w-12 h-12 rounded-lg bg-gradient-to-br from-slate-100 to-slate-300 mb-2"></div>
+                            <span class="text-sm text-slate-400">Light</span>
+                        </button>
+                        <button onclick="setTheme('midnight')" class="theme-btn p-3 rounded-xl border border-slate-700 hover:border-emerald-500 transition-all flex flex-col items-center" data-theme="midnight">
+                            <div class="w-12 h-12 rounded-lg bg-gradient-to-br from-purple-900 to-indigo-800 mb-2"></div>
+                            <span class="text-sm text-slate-400">Midnight</span>
+                        </button>
+                        <button onclick="setTheme('sunset')" class="theme-btn p-3 rounded-xl border border-slate-700 hover:border-emerald-500 transition-all flex flex-col items-center" data-theme="sunset">
+                            <div class="w-12 h-12 rounded-lg bg-gradient-to-br from-red-900 to-orange-700 mb-2"></div>
+                            <span class="text-sm text-slate-400">Sunset</span>
+                        </button>
+                        <button onclick="setTheme('forest')" class="theme-btn p-3 rounded-xl border border-slate-700 hover:border-emerald-500 transition-all flex flex-col items-center" data-theme="forest">
+                            <div class="w-12 h-12 rounded-lg bg-gradient-to-br from-green-900 to-green-700 mb-2"></div>
+                            <span class="text-sm text-slate-400">Forest</span>
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Add New Provider Form -->
                 <div class="mb-8">
                     <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
@@ -428,7 +646,30 @@
         let isLoading = false;
         let sidebarOpen = false;
         let currentSessionId = null;
+        let currentTheme = localStorage.getItem('theme') || 'dark';
         const API_BASE = window.location.origin;
+
+        function setTheme(themeName) {
+            currentTheme = themeName;
+            localStorage.setItem('theme', themeName);
+            document.documentElement.setAttribute('data-theme', themeName);
+            updateThemeButtons();
+        }
+
+        function updateThemeButtons() {
+            document.querySelectorAll('.theme-btn').forEach(btn => {
+                const btnTheme = btn.getAttribute('data-theme');
+                if (btnTheme === currentTheme) {
+                    btn.classList.add('ring-2', 'ring-emerald-500', 'ring-offset-2', 'ring-offset-slate-900');
+                } else {
+                    btn.classList.remove('ring-2', 'ring-emerald-500', 'ring-offset-2', 'ring-offset-slate-900');
+                }
+            });
+        }
+
+        function initializeTheme() {
+            setTheme(currentTheme);
+        }
         
         function checkAuth() {
             const storedToken = localStorage.getItem('token');
@@ -892,6 +1133,7 @@
         }
 
         document.addEventListener('DOMContentLoaded', function() {
+            initializeTheme();
             setTimeout(() => {
                 document.getElementById('messageInput').focus();
             }, 500);
