@@ -314,6 +314,23 @@
                     </div>
                 </div>
                 
+                <!-- Chat History -->
+                <div class="card p-5">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <span class="text-emerald-400">💬</span>
+                        Chat History
+                    </h3>
+                    <div id="chatHistoryList" class="space-y-2 max-h-64 overflow-y-auto">
+                        <div class="flex items-center gap-2 text-slate-400">
+                            <div class="w-4 h-4 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin"></div>
+                            <span class="text-sm">Loading...</span>
+                        </div>
+                    </div>
+                    <button onclick="startNewChat()" class="btn-primary w-full mt-4">
+                        ✨ New Chat
+                    </button>
+                </div>
+                
                 <!-- RAG Status -->
                 <div class="card p-5">
                     <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
@@ -350,6 +367,7 @@
         let chatHistory = [];
         let isLoading = false;
         let sidebarOpen = false;
+        let currentSessionId = null;
         const API_BASE = window.location.origin;
         
         function checkAuth() {
@@ -523,34 +541,49 @@
             input.value = '';
             
             showTypingIndicator();
-            
+
             try {
-                const response = await fetch(API_BASE + '/api/chat', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': 'Bearer ' + token
-                    },
-                    body: JSON.stringify({ message, provider, history: chatHistory })
-                });
-                
-                const text = await response.text();
-                console.log('Chat response:', text);
-                
+                let response;
                 let data;
-                try {
+
+                if (currentSessionId) {
+                    response = await fetch(`/api/history/${currentSessionId}`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + token
+                        },
+                        body: JSON.stringify({ message, provider })
+                    });
+
+                    const text = await response.text();
+                    console.log('Update session response:', text);
                     data = JSON.parse(text);
-                } catch (e) {
-                    console.error('Failed to parse response:', e);
-                    addMessage('assistant', '❌ Invalid response from server');
-                    return;
+                } else {
+                    response = await fetch('/api/history', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': 'Bearer ' + token
+                        },
+                        body: JSON.stringify({ message, provider })
+                    });
+
+                    const text = await response.text();
+                    console.log('Create session response:', text);
+                    data = JSON.parse(text);
+
+                    if (data.session_id) {
+                        currentSessionId = data.session_id;
+                    }
                 }
-                
+
                 hideTypingIndicator();
-                
+
                 if (data.response) {
                     addMessage('assistant', data.response);
                     chatHistory.push({ role: 'assistant', content: data.response });
+                    loadChatHistory();
                 } else {
                     addMessage('assistant', '❌ ' + (data.error || 'Failed to get response'));
                 }
@@ -585,11 +618,12 @@
             document.getElementById('sidebar').classList.add('hidden');
             document.getElementById('sidebarOverlay').classList.remove('show');
         }
-        
+
         async function loadDashboard() {
-            await Promise.all([loadSkills(), loadRAGStats()]);
+            await Promise.all([loadSkills(), loadRAGStats(), loadChatHistory()]);
         }
-        
+
+
         async function loadSkills() {
             try {
                 const response = await fetch('/api/skills', {
@@ -643,7 +677,129 @@
             document.getElementById('messageInput').value = `${skillName}: `;
             document.getElementById('messageInput').focus();
         }
-        
+
+        async function loadChatHistory() {
+            try {
+                const response = await fetch('/api/history', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                const sessions = await response.json();
+                renderChatHistory(sessions);
+            } catch (error) {
+                console.error('Failed to load chat history:', error);
+                document.getElementById('chatHistoryList').innerHTML =
+                    '<p class="text-slate-500 text-sm">Failed to load history</p>';
+            }
+        }
+
+        function renderChatHistory(sessions) {
+            const historyList = document.getElementById('chatHistoryList');
+
+            if (!sessions || sessions.length === 0) {
+                historyList.innerHTML = '<p class="text-slate-500 text-sm">No chat sessions</p>';
+                return;
+            }
+
+            historyList.innerHTML = sessions.map(session => `
+                <div class="bg-slate-800/50 rounded-lg p-3 cursor-pointer hover:bg-slate-700/50 transition-colors border border-slate-700 ${currentSessionId === session.id ? 'border-emerald-500' : ''}" onclick="loadSession('${session.id}')">
+                    <div class="flex justify-between items-start">
+                        <div class="flex-1 min-w-0">
+                            <div class="font-medium text-sm text-slate-200 truncate">${escapeHtml(session.title)}</div>
+                            <div class="text-xs text-slate-400 mt-1">${session.messages.length} messages</div>
+                        </div>
+                        <button onclick="event.stopPropagation(); deleteSession('${session.id}')" class="text-slate-500 hover:text-red-400 transition-colors ml-2">
+                            🗑️
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        async function loadSession(sessionId) {
+            try {
+                const response = await fetch(`/api/history/${sessionId}`, {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                const session = await response.json();
+
+                currentSessionId = sessionId;
+                document.getElementById('chatMessages').innerHTML = '';
+
+                session.messages.forEach(msg => {
+                    if (msg.role === 'user') {
+                        addMessage('user', msg.content);
+                    } else {
+                        addMessage('assistant', msg.content);
+                    }
+                });
+
+                loadChatHistory();
+            } catch (error) {
+                console.error('Failed to load session:', error);
+                addMessage('assistant', '❌ Failed to load session');
+            }
+        }
+
+        async function startNewChat() {
+            currentSessionId = null;
+            document.getElementById('chatMessages').innerHTML = `
+                <div class="message-animate message-bubble assistant">
+                    👋 Welcome to Terminal AI! I'm ready to help you with your notes and documents.
+                </div>
+            `;
+            loadChatHistory();
+        }
+
+        async function deleteSession(sessionId) {
+            if (!confirm('Delete this chat session?')) {
+                return;
+            }
+
+            try {
+                await fetch(`/api/history/${sessionId}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (currentSessionId === sessionId) {
+                    startNewChat();
+                } else {
+                    loadChatHistory();
+                }
+            } catch (error) {
+                console.error('Failed to delete session:', error);
+                alert('Failed to delete session');
+            }
+        }
+
+        async function saveMessageToSession(role, content) {
+            if (!currentSessionId) {
+                return;
+            }
+
+            try {
+                await fetch(`/api/history/${currentSessionId}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({
+                        message: role === 'user' ? content : null,
+                        provider: document.getElementById('providerSelect').value
+                    })
+                });
+            } catch (error) {
+                console.error('Failed to save message:', error);
+            }
+        }
+
         document.addEventListener('DOMContentLoaded', function() {
             setTimeout(() => {
                 document.getElementById('messageInput').focus();

@@ -93,7 +93,28 @@ type Skill struct {
 	Template    string   `json:"template"`
 }
 
+type ChatMessage struct {
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	Timestamp string `json:"timestamp"`
+}
+
+type ChatSession struct {
+	ID        string        `json:"id"`
+	Title     string        `json:"title"`
+	Provider  string        `json:"provider"`
+	User      string        `json:"user"`
+	CreatedAt string        `json:"created_at"`
+	UpdatedAt string        `json:"updated_at"`
+	Messages  []ChatMessage `json:"messages"`
+}
+
+type ChatHistory struct {
+	Sessions []ChatSession `json:"sessions"`
+}
+
 var ragIndex RAGIndex
+var chatHistory ChatHistory
 var providers map[string]AIProvider
 var useGopass bool
 var providerConfig ProviderGlobalConfig
@@ -263,6 +284,7 @@ func main() {
 	initProviders()
 	securityMgr = initSecurityManager()
 	loadRAGIndex()
+	loadChatHistory()
 
 	if len(os.Args) < 2 {
 		showHelp()
@@ -288,6 +310,10 @@ func main() {
 		handleProviderCommand()
 	case "web-server":
 		startWebServer()
+	case "chat":
+		handleChatCommand()
+	case "history":
+		handleHistoryCommand()
 	case "--help", "-h":
 		showHelp()
 	default:
@@ -357,6 +383,118 @@ func saveRAGIndex() error {
 	}
 
 	return os.WriteFile(indexFile, data, 0644)
+}
+
+func getChatHistoryPath() string {
+	dataDir := getDataDir()
+	return filepath.Join(dataDir, "chat-history.json")
+}
+
+func loadChatHistory() error {
+	data, err := os.ReadFile(getChatHistoryPath())
+	if err != nil {
+		chatHistory = ChatHistory{Sessions: []ChatSession{}}
+		return nil
+	}
+	return json.Unmarshal(data, &chatHistory)
+}
+
+func saveChatHistory() error {
+	dataDir := getDataDir()
+	historyFile := getChatHistoryPath()
+
+	os.MkdirAll(dataDir, 0755)
+
+	data, err := json.MarshalIndent(chatHistory, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(historyFile, data, 0644)
+}
+
+func generateSessionID() string {
+	return fmt.Sprintf("chat_%d", time.Now().UnixNano())
+}
+
+func createSession(title, provider, user string) *ChatSession {
+	session := ChatSession{
+		ID:        generateSessionID(),
+		Title:     title,
+		Provider:  provider,
+		User:      user,
+		CreatedAt: time.Now().Format(time.RFC3339),
+		UpdatedAt: time.Now().Format(time.RFC3339),
+		Messages:  []ChatMessage{},
+	}
+
+	chatHistory.Sessions = append(chatHistory.Sessions, session)
+	saveChatHistory()
+	return &session
+}
+
+func updateSession(sessionID, role, content string) error {
+	for i := range chatHistory.Sessions {
+		if chatHistory.Sessions[i].ID == sessionID {
+			message := ChatMessage{
+				Role:      role,
+				Content:   content,
+				Timestamp: time.Now().Format(time.RFC3339),
+			}
+			chatHistory.Sessions[i].Messages = append(chatHistory.Sessions[i].Messages, message)
+			chatHistory.Sessions[i].UpdatedAt = time.Now().Format(time.RFC3339)
+			return saveChatHistory()
+		}
+	}
+	return fmt.Errorf("session not found")
+}
+
+func getSession(sessionID string) (*ChatSession, error) {
+	for i := range chatHistory.Sessions {
+		if chatHistory.Sessions[i].ID == sessionID {
+			return &chatHistory.Sessions[i], nil
+		}
+	}
+	return nil, fmt.Errorf("session not found")
+}
+
+func listSessions() []ChatSession {
+	sort.Slice(chatHistory.Sessions, func(i, j int) bool {
+		timeI, _ := time.Parse(time.RFC3339, chatHistory.Sessions[i].UpdatedAt)
+		timeJ, _ := time.Parse(time.RFC3339, chatHistory.Sessions[j].UpdatedAt)
+		return timeJ.Before(timeI)
+	})
+	return chatHistory.Sessions
+}
+
+func deleteSession(sessionID string) error {
+	for i, session := range chatHistory.Sessions {
+		if session.ID == sessionID {
+			chatHistory.Sessions = append(chatHistory.Sessions[:i], chatHistory.Sessions[i+1:]...)
+			return saveChatHistory()
+		}
+	}
+	return fmt.Errorf("session not found")
+}
+
+func clearAllHistory() error {
+	chatHistory = ChatHistory{Sessions: []ChatSession{}}
+	return saveChatHistory()
+}
+
+func getLatestSession() *ChatSession {
+	sessions := listSessions()
+	if len(sessions) == 0 {
+		return nil
+	}
+	return &sessions[0]
+}
+
+func truncateTitle(title string) string {
+	if len(title) <= 100 {
+		return title
+	}
+	return title[:100]
 }
 
 func fetchWebContent(url string) {
@@ -964,6 +1102,377 @@ func showProviderHelp() {
 	fmt.Println("  terminal-ai provider add myprovider")
 }
 
+func handleChatCommand() {
+	if len(os.Args) < 3 {
+		fmt.Println("Usage: terminal-ai chat --list | chat --new [message] | chat --last [message] | chat --session <id> [message]")
+		os.Exit(1)
+	}
+
+	flag := os.Args[2]
+
+	switch flag {
+	case "--list":
+		listSessionsCLI()
+	case "--new":
+		var message string
+		if len(os.Args) > 3 {
+			message = strings.Join(os.Args[3:], " ")
+		}
+		startNewSession(message)
+	case "--last":
+		var message string
+		if len(os.Args) > 3 {
+			message = strings.Join(os.Args[3:], " ")
+		}
+		startLastSession(message)
+	case "--session":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: terminal-ai chat --session <id> [message]")
+			os.Exit(1)
+		}
+		sessionID := os.Args[3]
+		var message string
+		if len(os.Args) > 4 {
+			message = strings.Join(os.Args[4:], " ")
+		}
+		startSession(sessionID, message)
+	default:
+		fmt.Println("Unknown chat flag. Use: --list | --new | --last | --session")
+	}
+}
+
+func handleHistoryCommand() {
+	if len(os.Args) < 3 {
+		fmt.Println("Usage: terminal-ai history list | history view <id> | history export <id> [filename] [--format txt|md] | history delete <id> | history clear")
+		os.Exit(1)
+	}
+
+	subCmd := os.Args[2]
+
+	switch subCmd {
+	case "list":
+		listSessionsCLI()
+	case "view":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: terminal-ai history view <id>")
+			os.Exit(1)
+		}
+		viewSessionCLI(os.Args[3])
+	case "export":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: terminal-ai history export <id> [filename] [--format txt|md]")
+			os.Exit(1)
+		}
+		sessionID := os.Args[3]
+		filename := ""
+		format := "txt"
+		for i := 4; i < len(os.Args); i++ {
+			if os.Args[i] == "--format" && i+1 < len(os.Args) {
+				format = os.Args[i+1]
+				i++
+			} else if filename == "" {
+				filename = os.Args[i]
+			}
+		}
+		exportSession(sessionID, filename, format)
+	case "delete":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: terminal-ai history delete <id>")
+			os.Exit(1)
+		}
+		deleteSessionCLI(os.Args[3])
+	case "clear":
+		clearHistoryCLI()
+	default:
+		fmt.Println("Unknown history command. Use: list | view | export | delete | clear")
+	}
+}
+
+func listSessionsCLI() {
+	sessions := listSessions()
+	if len(sessions) == 0 {
+		fmt.Println("📚 No chat sessions found")
+		return
+	}
+
+	fmt.Printf("📚 Chat History:\n\n")
+	for i, session := range sessions {
+		fmt.Printf("%d. %s\n", i+1, session.Title)
+		fmt.Printf("   ID: %s\n", session.ID)
+		fmt.Printf("   Provider: %s\n", session.Provider)
+		fmt.Printf("   Messages: %d\n", len(session.Messages))
+		fmt.Printf("   Created: %s\n", session.CreatedAt)
+		fmt.Printf("   Updated: %s\n\n", session.UpdatedAt)
+	}
+}
+
+func viewSessionCLI(sessionID string) {
+	session, err := getSession(sessionID)
+	if err != nil {
+		fmt.Printf("❌ Session not found: %s\n", sessionID)
+		return
+	}
+
+	fmt.Printf("📖 %s\n", session.Title)
+	fmt.Printf("   ID: %s\n", session.ID)
+	fmt.Printf("   Provider: %s\n", session.Provider)
+	fmt.Printf("   Created: %s\n\n", session.CreatedAt)
+
+	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+	for _, msg := range session.Messages {
+		if msg.Role == "user" {
+			fmt.Printf("\n👤 User:\n%s\n", msg.Content)
+		} else {
+			fmt.Printf("\n🤖 AI:\n%s\n", msg.Content)
+		}
+	}
+
+	fmt.Println("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+}
+
+func startNewSession(message string) {
+	fmt.Println("✨ Starting new chat session")
+	startREPLWithSession(nil, message)
+}
+
+func startLastSession(message string) {
+	session := getLatestSession()
+	if session == nil {
+		fmt.Println("⚠️  No previous session found. Starting new chat.")
+		startREPLWithSession(nil, message)
+		return
+	}
+	startREPLWithSession(session, message)
+}
+
+func startSession(sessionID, message string) {
+	session, err := getSession(sessionID)
+	if err != nil {
+		fmt.Printf("❌ Session not found: %s\n", sessionID)
+		return
+	}
+	startREPLWithSession(session, message)
+}
+
+func startREPLWithSession(session *ChatSession, initialMessage string) {
+	providerName := providerConfig.DefaultProvider
+
+	if session == nil {
+		if initialMessage == "" {
+			fmt.Print("Your message: ")
+			reader := bufio.NewReader(os.Stdin)
+			msg, _ := reader.ReadString('\n')
+			msg = strings.TrimSpace(msg)
+			if msg == "" {
+				fmt.Println("Message cannot be empty")
+				return
+			}
+			initialMessage = msg
+		}
+
+		fmt.Printf("🎯 Primary provider: %s\n", providerName)
+		fmt.Printf("🔄 Fallback enabled: %v\n", providerConfig.FallbackEnabled)
+
+		session = createSession(truncateTitle(initialMessage), providerName, "user")
+		if initialMessage != "" {
+			updateSession(session.ID, "user", initialMessage)
+		}
+	} else {
+		fmt.Printf("📂 Loaded session: %s\n", session.Title)
+		fmt.Printf("   Messages: %d\n", len(session.Messages))
+		fmt.Printf("   Provider: %s\n\n", session.Provider)
+		providerName = session.Provider
+	}
+
+	if initialMessage != "" && len(session.Messages) == 0 {
+		sessionWithHistory(session, providerName, initialMessage)
+	}
+
+	for {
+		fmt.Print("\nContinue? (y/n): ")
+		reader := bufio.NewReader(os.Stdin)
+		answer, _ := reader.ReadString('\n')
+		answer = strings.TrimSpace(answer)
+
+		if strings.ToLower(answer) != "y" {
+			fmt.Printf("\n💾 Chat saved with ID: %s\n", session.ID)
+			return
+		}
+
+		fmt.Print("Your message: ")
+		msg, _ := reader.ReadString('\n')
+		msg = strings.TrimSpace(msg)
+
+		if msg == "" {
+			continue
+		}
+
+		sessionWithHistory(session, providerName, msg)
+	}
+}
+
+func sessionWithHistory(session *ChatSession, providerName, message string) {
+	messages := []Message{{Role: "user", Content: message}}
+	for _, msg := range session.Messages {
+		if msg.Role == "user" || msg.Role == "assistant" {
+			messages = append(messages, Message{Role: msg.Role, Content: msg.Content})
+		}
+	}
+
+	skills := findMatchingSkills(message)
+	finalMessage := message
+
+	if len(skills) > 0 {
+		for _, skill := range skills {
+			finalMessage = skill.Template + "\n\n" + finalMessage
+		}
+	}
+
+	results := searchRAG(message)
+	if len(results) > 0 {
+		context := "\n\nRelevant documents:\n"
+		for _, doc := range results {
+			contentLen := len(doc.Content)
+			if contentLen > 200 {
+				contentLen = 200
+			}
+			context += fmt.Sprintf("- %s: %s\n", doc.Path, doc.Content[:contentLen])
+		}
+		finalMessage += context
+	}
+
+	provider := providers[providerName]
+
+	req := Request{
+		Model:    provider.Model,
+		Messages: messages,
+		Stream:   false,
+	}
+
+	var response *Response
+	var actualProvider string
+	var err error
+
+	if providerConfig.FallbackEnabled {
+		response, actualProvider, err = makeRequestWithFallback(
+			provider.Endpoint, provider.APIKey, req, providerName,
+		)
+	} else {
+		response, err = makeRequest(provider.Endpoint, provider.APIKey, req, provider.Name)
+		actualProvider = providerName
+	}
+
+	if err != nil {
+		fmt.Printf("❌ Error: %v\n", err)
+		return
+	}
+
+	if response.Error != nil {
+		fmt.Printf("❌ API Error: %s\n", response.Error.Message)
+		return
+	}
+
+	if len(response.Choices) > 0 {
+		if actualProvider != providerName {
+			fmt.Printf("📡 Response from fallback provider: %s\n", actualProvider)
+		} else {
+			fmt.Printf("✅ Success with provider: %s\n", actualProvider)
+		}
+		fmt.Println(response.Choices[0].Message.Content)
+		updateSession(session.ID, "assistant", response.Choices[0].Message.Content)
+	}
+}
+
+func deleteSessionCLI(sessionID string) {
+	fmt.Printf("⚠️  Delete session '%s'? (y/n): ", sessionID)
+	reader := bufio.NewReader(os.Stdin)
+	answer, _ := reader.ReadString('\n')
+	answer = strings.TrimSpace(answer)
+
+	if strings.ToLower(answer) == "y" {
+		if err := deleteSession(sessionID); err != nil {
+			fmt.Printf("❌ Failed to delete session: %v\n", err)
+		} else {
+			fmt.Printf("✅ Session '%s' deleted\n", sessionID)
+		}
+	}
+}
+
+func clearHistoryCLI() {
+	sessions := listSessions()
+	fmt.Printf("⚠️  This will delete all %d chat sessions. Continue? (y/n): ", len(sessions))
+	reader := bufio.NewReader(os.Stdin)
+	answer, _ := reader.ReadString('\n')
+	answer = strings.TrimSpace(answer)
+
+	if strings.ToLower(answer) == "y" {
+		if err := clearAllHistory(); err != nil {
+			fmt.Printf("❌ Failed to clear history: %v\n", err)
+		} else {
+			fmt.Println("✅ Chat history cleared")
+		}
+	}
+}
+
+func exportSession(sessionID, filename, format string) {
+	session, err := getSession(sessionID)
+	if err != nil {
+		fmt.Printf("❌ Session not found: %s\n", sessionID)
+		return
+	}
+
+	if filename == "" {
+		if format == "md" {
+			filename = fmt.Sprintf("%s.md", strings.Map(func(r rune) rune {
+				if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+					return r
+				}
+				return '-'
+			}, session.Title[:min(30, len(session.Title))]))
+		} else {
+			filename = fmt.Sprintf("%s.txt", strings.Map(func(r rune) rune {
+				if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+					return r
+				}
+				return '-'
+			}, session.Title[:min(30, len(session.Title))]))
+		}
+	}
+
+	var content string
+
+	if format == "md" {
+		content = fmt.Sprintf("# %s\n\n**ID:** %s\n**Provider:** %s\n**Created:** %s\n\n---\n\n## Conversation\n\n",
+			session.Title, session.ID, session.Provider, session.CreatedAt)
+
+		for _, msg := range session.Messages {
+			if msg.Role == "user" {
+				content += fmt.Sprintf("### User\n%s\n\n", msg.Content)
+			} else {
+				content += fmt.Sprintf("### Assistant\n%s\n\n", msg.Content)
+			}
+		}
+	} else {
+		content = fmt.Sprintf("Title: %s\nID: %s\nProvider: %s\nCreated: %s\n\n%s\n\n",
+			session.Title, session.ID, session.Provider, session.CreatedAt, strings.Repeat("=", 60))
+
+		for _, msg := range session.Messages {
+			if msg.Role == "user" {
+				content += fmt.Sprintf("[User] %s\n", msg.Content)
+			} else {
+				content += fmt.Sprintf("[AI] %s\n", msg.Content)
+			}
+		}
+	}
+
+	if err := os.WriteFile(filename, []byte(content), 0644); err != nil {
+		fmt.Printf("❌ Failed to export session: %v\n", err)
+	} else {
+		fmt.Printf("✅ Session exported to: %s\n", filename)
+	}
+}
+
 func min(a, b int) int {
 	if a < b {
 		return a
@@ -1211,10 +1720,19 @@ func makeRequest(endpoint, apiKey string, req Request, provider string) (*Respon
 }
 
 func showHelp() {
-	fmt.Println("Terminal AI CLI - AI Assistant with Web, Skills & RAG")
+	fmt.Println("Terminal AI CLI - AI Assistant with Web, Skills, RAG & Chat History")
 	fmt.Println()
 	fmt.Println("Usage:")
 	fmt.Println("  terminal-ai [provider] <message>       - Chat with AI")
+	fmt.Println("  terminal-ai chat --list                 - List all chat sessions")
+	fmt.Println("  terminal-ai chat --new [message]        - Start new session")
+	fmt.Println("  terminal-ai chat --last [message]       - Continue last session")
+	fmt.Println("  terminal-ai chat --session <id> [msg]   - Load specific session")
+	fmt.Println("  terminal-ai history list                 - List all sessions")
+	fmt.Println("  terminal-ai history view <id>            - View session details")
+	fmt.Println("  terminal-ai history export <id> [file]   - Export session to file")
+	fmt.Println("  terminal-ai history delete <id>           - Delete session")
+	fmt.Println("  terminal-ai history clear                - Clear all history")
 	fmt.Println("  terminal-ai web <url>                  - Fetch web content")
 	fmt.Println("  terminal-ai rag index <dir>             - Index local files")
 	fmt.Println("  terminal-ai rag search <query>          - Search indexed files")
@@ -1241,6 +1759,7 @@ func showHelp() {
 	fmt.Println("Documentation:")
 	fmt.Println("  docs/QUICKSTART.md         - Quick start guide")
 	fmt.Println("  docs/SYSTEM.md             - Full system documentation")
+	fmt.Println("  docs/CHAT_HISTORY.md        - Chat history documentation")
 	fmt.Println("  docs/PROVIDER_CONFIG.md    - Provider fallback & BYOK guide")
 	fmt.Println("  docs/SECURITY.md          - Security guide")
 	fmt.Println("  docs/RASPBERRY_PI.md      - Raspberry Pi deployment")
