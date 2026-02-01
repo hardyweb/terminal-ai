@@ -47,11 +47,13 @@ type LoginResponse struct {
 }
 
 type RAGIndexRequest struct {
-	Directory string `json:"directory"`
+	Directory  string `json:"directory"`
+	Visibility string `json:"visibility"`
 }
 
 type RAGSearchRequest struct {
-	Query string `json:"query"`
+	Query      string `json:"query"`
+	Visibility string `json:"visibility"`
 }
 
 func startWebServer() {
@@ -71,8 +73,10 @@ func startWebServer() {
 	router.HandleFunc("/api/login", handleLogin).Methods("POST")
 	router.HandleFunc("/api/logout", handleLogout).Methods("POST")
 	router.HandleFunc("/api/chat", authenticate(handleChat)).Methods("POST")
+	router.HandleFunc("/api/chat/public", handlePublicChat).Methods("POST")
 	router.HandleFunc("/api/rag/index", authenticate(handleRAGIndex)).Methods("POST")
 	router.HandleFunc("/api/rag/search", authenticate(handleRAGSearch)).Methods("POST")
+	router.HandleFunc("/api/rag/search/public", handlePublicRAGSearch).Methods("POST")
 	router.HandleFunc("/api/skills", authenticate(handleListSkills)).Methods("GET")
 	router.HandleFunc("/api/users", authenticate(handleListUsers)).Methods("GET")
 	router.HandleFunc("/api/history", authenticate(handleListHistory)).Methods("GET")
@@ -197,7 +201,8 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 		messages = append(messages, Message{Role: "user", Content: req.Message})
 	}
 
-	results := searchRAG(req.Message)
+	username := r.Header.Get("X-Username")
+	results := searchRAGWithFilters(req.Message, username, "")
 	if len(results) > 0 {
 		context := "\n\nRelevant documents:\n"
 		for _, doc := range results {
@@ -268,6 +273,12 @@ func handleRAGIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	username := r.Header.Get("X-Username")
+	visibility := req.Visibility
+	if visibility == "" {
+		visibility = "private"
+	}
+
 	count := 0
 	err := filepath.Walk(req.Directory, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -291,10 +302,12 @@ func handleRAGIndex(w http.ResponseWriter, r *http.Request) {
 		keywords := extractKeywords(string(content))
 
 		doc := RAGDocument{
-			Path:      path,
-			Content:   string(content),
-			Keywords:  keywords,
-			IndexedAt: time.Now().Format(time.RFC3339),
+			Path:       path,
+			Content:    string(content),
+			Keywords:   keywords,
+			IndexedAt:  time.Now().Format(time.RFC3339),
+			Owner:      username,
+			Visibility: visibility,
 		}
 
 		ragIndex.Documents = append(ragIndex.Documents, doc)
@@ -314,9 +327,10 @@ func handleRAGIndex(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":  "success",
-		"indexed": count,
-		"total":   len(ragIndex.Documents),
+		"status":     "success",
+		"indexed":    count,
+		"total":      len(ragIndex.Documents),
+		"visibility": visibility,
 	})
 }
 
@@ -327,7 +341,10 @@ func handleRAGSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results := searchRAG(req.Query)
+	username := r.Header.Get("X-Username")
+	visibility := req.Visibility
+
+	results := searchRAGWithFilters(req.Query, username, visibility)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -446,7 +463,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	messages := []Message{{Role: "user", Content: req.Message}}
 
-	results := searchRAG(req.Message)
+	results := searchRAGWithFilters(req.Message, username, "")
 	if len(results) > 0 {
 		context := "\n\nRelevant documents:\n"
 		for _, doc := range results {
@@ -550,7 +567,7 @@ func handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	results := searchRAG(req.Message)
+	results := searchRAGWithFilters(req.Message, username, "")
 	if len(results) > 0 {
 		context := "\n\nRelevant documents:\n"
 		for _, doc := range results {
@@ -630,4 +647,115 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+}
+
+func handlePublicRAGSearch(w http.ResponseWriter, r *http.Request) {
+	var req RAGSearchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	results := searchRAGWithFilters(req.Query, "", "public")
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "success",
+		"results": results,
+		"count":   len(results),
+	})
+}
+
+func handlePublicChat(w http.ResponseWriter, r *http.Request) {
+	var req ChatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	providerName := req.Provider
+	if providerName == "" {
+		providerName = providerConfig.DefaultProvider
+	}
+
+	provider, exists := providers[providerName]
+	if !exists {
+		http.Error(w, "Unknown provider", http.StatusBadRequest)
+		return
+	}
+
+	if provider.APIKey == "" {
+		http.Error(w, "API key not configured", http.StatusInternalServerError)
+		return
+	}
+
+	messages := req.History
+	if len(messages) == 0 {
+		messages = []Message{{Role: "user", Content: req.Message}}
+	} else {
+		messages = append(messages, Message{Role: "user", Content: req.Message})
+	}
+
+	results := searchRAGWithFilters(req.Message, "", "public")
+	if len(results) > 0 {
+		context := "\n\nRelevant documents:\n"
+		for _, doc := range results {
+			contentLen := len(doc.Content)
+			if contentLen > 200 {
+				contentLen = 200
+			}
+			context += fmt.Sprintf("- %s: %s\n", doc.Path, doc.Content[:contentLen])
+		}
+		messages[len(messages)-1].Content += context
+	}
+
+	var response *Response
+	var actualProvider string
+	var err error
+
+	if providerConfig.FallbackEnabled {
+		response, actualProvider, err = makeRequestWithFallback(
+			provider.Endpoint, provider.APIKey, Request{
+				Model:    provider.Model,
+				Messages: messages,
+				Stream:   false,
+			}, providerName,
+		)
+	} else {
+		response, err = makeRequest(provider.Endpoint, provider.APIKey, Request{
+			Model:    provider.Model,
+			Messages: messages,
+			Stream:   false,
+		}, provider.Name)
+		actualProvider = providerName
+	}
+
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if response.Error != nil {
+		http.Error(w, response.Error.Message, http.StatusInternalServerError)
+		return
+	}
+
+	var content string
+	if len(response.Choices) > 0 {
+		content = response.Choices[0].Message.Content
+	} else {
+		content = "No response generated"
+	}
+
+	resp := ChatResponse{
+		Response:  content,
+		Timestamp: time.Now().Format(time.RFC3339),
+	}
+
+	if actualProvider != req.Provider && req.Provider != "" {
+		resp.Response = fmt.Sprintf("[Provider: %s] %s", actualProvider, content)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }

@@ -76,10 +76,12 @@ type APIError struct {
 }
 
 type RAGDocument struct {
-	Path      string   `json:"path"`
-	Content   string   `json:"content"`
-	Keywords  []string `json:"keywords"`
-	IndexedAt string   `json:"indexed_at"`
+	Path       string   `json:"path"`
+	Content    string   `json:"content"`
+	Keywords   []string `json:"keywords"`
+	IndexedAt  string   `json:"indexed_at"`
+	Owner      string   `json:"owner"`
+	Visibility string   `json:"visibility"`
 }
 
 type RAGIndex struct {
@@ -554,6 +556,10 @@ func handleRAGCommand() {
 }
 
 func indexDirectory(dir string) {
+	indexDirectoryWithOwner(dir, "", "private")
+}
+
+func indexDirectoryWithOwner(dir, owner, visibility string) {
 	count := 0
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -577,10 +583,12 @@ func indexDirectory(dir string) {
 		keywords := extractKeywords(string(content))
 
 		doc := RAGDocument{
-			Path:      path,
-			Content:   string(content),
-			Keywords:  keywords,
-			IndexedAt: time.Now().Format(time.RFC3339),
+			Path:       path,
+			Content:    string(content),
+			Keywords:   keywords,
+			IndexedAt:  time.Now().Format(time.RFC3339),
+			Owner:      owner,
+			Visibility: visibility,
 		}
 
 		ragIndex.Documents = append(ragIndex.Documents, doc)
@@ -598,10 +606,14 @@ func indexDirectory(dir string) {
 		return
 	}
 
-	fmt.Printf("✅ Indexed %d documents\n", count)
+	fmt.Printf("✅ Indexed %d documents (owner: %s, visibility: %s)\n", count, owner, visibility)
 }
 
 func searchRAG(query string) []RAGDocument {
+	return searchRAGWithFilters(query, "", "")
+}
+
+func searchRAGWithFilters(query, username, visibility string) []RAGDocument {
 	queryWords := tokenize(query)
 	type scoreDoc struct {
 		doc   RAGDocument
@@ -610,6 +622,24 @@ func searchRAG(query string) []RAGDocument {
 	var scored []scoreDoc
 
 	for _, doc := range ragIndex.Documents {
+		canAccess := false
+
+		if username == "" && visibility == "" {
+			canAccess = true
+		} else if visibility == "public" {
+			canAccess = doc.Visibility == "public"
+		} else if username != "" {
+			if doc.Visibility == "public" {
+				canAccess = true
+			} else if doc.Owner == username {
+				canAccess = true
+			}
+		}
+
+		if !canAccess {
+			continue
+		}
+
 		score := 0
 		docKeywords := make(map[string]bool)
 		for _, kw := range doc.Keywords {
@@ -1329,7 +1359,7 @@ func sessionWithHistory(session *ChatSession, providerName, message string) {
 		}
 	}
 
-	results := searchRAG(message)
+	results := searchRAGWithFilters(message, "user", "")
 	if len(results) > 0 {
 		context := "\n\nRelevant documents:\n"
 		for _, doc := range results {
@@ -1505,7 +1535,7 @@ func chatWithAI(providerName, message string) {
 		}
 	}
 
-	results := searchRAG(message)
+	results := searchRAGWithFilters(message, "user", "")
 	if len(results) > 0 {
 		context := "\n\nRelevant documents:\n"
 		for _, doc := range results {
