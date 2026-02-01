@@ -24,6 +24,32 @@ type AIProvider struct {
 	Model    string
 }
 
+type AIProviderConfig struct {
+	Priority    int    `json:"priority"`
+	Enabled     bool   `json:"enabled"`
+	MaxRetries  int    `json:"max_retries"`
+	GopassKey   string `json:"gopass_key"`
+	EnvKey      string `json:"env_key"`
+	EndpointKey string `json:"endpoint_key"`
+	ModelKey    string `json:"model_key"`
+	BYOK        bool   `json:"byok"`
+	Description string `json:"description"`
+}
+
+type ProviderGlobalConfig struct {
+	DefaultProvider string                      `json:"default_provider"`
+	FallbackEnabled bool                        `json:"fallback_enabled"`
+	RetryAttempts   int                         `json:"retry_attempts"`
+	RetryDelayMs    int                         `json:"retry_delay_ms"`
+	Providers       map[string]AIProviderConfig `json:"providers"`
+}
+
+type ProviderError struct {
+	Provider string
+	Error    error
+	Type     string
+}
+
 type Request struct {
 	Model    string    `json:"model"`
 	Messages []Message `json:"messages"`
@@ -70,6 +96,7 @@ type Skill struct {
 var ragIndex RAGIndex
 var providers map[string]AIProvider
 var useGopass bool
+var providerConfig ProviderGlobalConfig
 
 func getSecretFromGopass(path string) (string, error) {
 	cmd := exec.Command("gopass", "show", path)
@@ -102,6 +129,124 @@ func getEnvOrGopass(envVar, gopassPath string) string {
 	return ""
 }
 
+func loadProviderConfig() error {
+	homeDir, _ := os.UserHomeDir()
+	configFile := filepath.Join(homeDir, configDir, "providers.json")
+
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		return createDefaultProviderConfig(configFile)
+	}
+
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return err
+	}
+
+	return json.Unmarshal(data, &providerConfig)
+}
+
+func createDefaultProviderConfig(path string) error {
+	homeDir, _ := os.UserHomeDir()
+	configPath := filepath.Join(homeDir, configDir)
+	os.MkdirAll(configPath, 0755)
+
+	defaultConfig := ProviderGlobalConfig{
+		DefaultProvider: "openrouter",
+		FallbackEnabled: true,
+		RetryAttempts:   3,
+		RetryDelayMs:    1000,
+		Providers: map[string]AIProviderConfig{
+			"openrouter": {
+				Priority:    1,
+				Enabled:     true,
+				MaxRetries:  2,
+				GopassKey:   "terminal-ai/openrouter_api_key",
+				EnvKey:      "OPENROUTER_API_KEY",
+				EndpointKey: "OPENROUTER_ENDPOINT",
+				ModelKey:    "OPENROUTER_MODEL",
+			},
+			"gemini": {
+				Priority:    2,
+				Enabled:     true,
+				MaxRetries:  2,
+				GopassKey:   "terminal-ai/gemini_api_key",
+				EnvKey:      "GEMINI_API_KEY",
+				EndpointKey: "GEMINI_ENDPOINT",
+				ModelKey:    "GEMINI_MODEL",
+			},
+			"groq": {
+				Priority:    3,
+				Enabled:     true,
+				MaxRetries:  2,
+				GopassKey:   "terminal-ai/groq_api_key",
+				EnvKey:      "GROQ_API_KEY",
+				EndpointKey: "GROQ_ENDPOINT",
+				ModelKey:    "GROQ_MODEL",
+			},
+		},
+	}
+
+	data, _ := json.MarshalIndent(defaultConfig, "", "  ")
+	return os.WriteFile(path, data, 0644)
+}
+
+func getOrderedProviders() []string {
+	type providerPriority struct {
+		name     string
+		priority int
+	}
+
+	var priorities []providerPriority
+	for name, config := range providerConfig.Providers {
+		if config.Enabled {
+			priorities = append(priorities, providerPriority{name, config.Priority})
+		}
+	}
+
+	sort.Slice(priorities, func(i, j int) bool {
+		return priorities[i].priority < priorities[j].priority
+	})
+
+	var result []string
+	for _, p := range priorities {
+		result = append(result, p.name)
+	}
+	return result
+}
+
+func classifyError(err error, response *Response) string {
+	if err != nil {
+		if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline exceeded") {
+			return "timeout"
+		}
+		if strings.Contains(err.Error(), "connection") || strings.Contains(err.Error(), "network") {
+			return "network"
+		}
+	}
+	if response != nil && response.Error != nil {
+		if strings.Contains(response.Error.Type, "rate_limit") ||
+			strings.Contains(response.Error.Message, "rate limit") ||
+			strings.Contains(response.Error.Message, "429") {
+			return "rate_limit"
+		}
+		return "server_error"
+	}
+	return "unknown"
+}
+
+func combineErrors(err error, response *Response) error {
+	if err != nil && response != nil && response.Error != nil {
+		return fmt.Errorf("%v: %s", err, response.Error.Message)
+	}
+	if err != nil {
+		return err
+	}
+	if response != nil && response.Error != nil {
+		return fmt.Errorf(response.Error.Message)
+	}
+	return fmt.Errorf("unknown error")
+}
+
 func main() {
 	homeDir, _ := os.UserHomeDir()
 	configPath := filepath.Join(homeDir, configDir)
@@ -110,6 +255,10 @@ func main() {
 	godotenv.Load(".env")
 
 	useGopass = os.Getenv("USE_GOPASS") == "true"
+
+	if err := loadProviderConfig(); err != nil {
+		fmt.Printf("Warning: Failed to load provider config: %v\n", err)
+	}
 
 	initProviders()
 	securityMgr = initSecurityManager()
@@ -135,6 +284,8 @@ func main() {
 		handleSkillCommand()
 	case "user":
 		handleUserCommand()
+	case "provider":
+		handleProviderCommand()
 	case "web-server":
 		startWebServer()
 	case "--help", "-h":
@@ -523,7 +674,308 @@ func deleteUser(username string) {
 	fmt.Printf("✅ User '%s' deleted\n", username)
 }
 
+func handleProviderCommand() {
+	if len(os.Args) < 3 {
+		showProviderHelp()
+		os.Exit(1)
+	}
+
+	subCmd := os.Args[2]
+
+	switch subCmd {
+	case "list":
+		listProviders()
+	case "test":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: terminal-ai provider test <provider-name>")
+			os.Exit(1)
+		}
+		testProvider(os.Args[3])
+	case "enable":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: terminal-ai provider enable <provider-name>")
+			os.Exit(1)
+		}
+		toggleProvider(os.Args[3], true)
+	case "disable":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: terminal-ai provider disable <provider-name>")
+			os.Exit(1)
+		}
+		toggleProvider(os.Args[3], false)
+	case "priority":
+		if len(os.Args) < 5 {
+			fmt.Println("Usage: terminal-ai provider priority <provider-name> <priority>")
+			os.Exit(1)
+		}
+		var priority int
+		fmt.Sscanf(os.Args[4], "%d", &priority)
+		setProviderPriority(os.Args[3], priority)
+	case "add":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: terminal-ai provider add <provider-name>")
+			os.Exit(1)
+		}
+		addProvider(os.Args[3])
+	case "default":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: terminal-ai provider default <provider-name>")
+			os.Exit(1)
+		}
+		setDefaultProvider(os.Args[3])
+	default:
+		showProviderHelp()
+	}
+}
+
+func listProviders() {
+	fmt.Println("📊 Provider Configuration:")
+	fmt.Println()
+
+	orderedProviders := getOrderedProviders()
+
+	for i, providerName := range orderedProviders {
+		config := providerConfig.Providers[providerName]
+		provider := providers[providerName]
+
+		status := "✅ Enabled"
+		if !config.Enabled {
+			status = "❌ Disabled"
+		}
+
+		defaultMarker := ""
+		if providerName == providerConfig.DefaultProvider {
+			defaultMarker = " (DEFAULT)"
+		}
+
+		fmt.Printf("%d. %s%s\n", i+1, providerName, defaultMarker)
+		fmt.Printf("   Priority: %d | %s\n", config.Priority, status)
+		fmt.Printf("   Endpoint: %s\n", provider.Endpoint)
+		fmt.Printf("   Model: %s\n", provider.Model)
+		if config.BYOK {
+			fmt.Printf("   🔐 BYOK: Custom provider\n")
+		}
+		fmt.Printf("   Max Retries: %d\n", config.MaxRetries)
+		fmt.Println()
+	}
+
+	fmt.Printf("Fallback Enabled: %v\n", providerConfig.FallbackEnabled)
+	fmt.Printf("Default Provider: %s\n", providerConfig.DefaultProvider)
+}
+
+func testProvider(providerName string) {
+	config, exists := providerConfig.Providers[providerName]
+	if !exists {
+		fmt.Printf("❌ Provider '%s' not found\n", providerName)
+		return
+	}
+
+	if !config.Enabled {
+		fmt.Printf("❌ Provider '%s' is disabled\n", providerName)
+		return
+	}
+
+	provider, exists := providers[providerName]
+	if !exists {
+		fmt.Printf("❌ Provider '%s' not initialized\n", providerName)
+		return
+	}
+
+	if provider.APIKey == "" {
+		fmt.Printf("❌ No API key configured for %s\n", providerName)
+		return
+	}
+
+	fmt.Printf("🧪 Testing provider: %s\n", providerName)
+	fmt.Printf("   Endpoint: %s\n", provider.Endpoint)
+	fmt.Printf("   Model: %s\n", provider.Model)
+	fmt.Println()
+
+	req := Request{
+		Model: provider.Model,
+		Messages: []Message{
+			{Role: "user", Content: "Hello! Say 'Test successful' if you receive this."},
+		},
+		Stream: false,
+	}
+
+	response, err := makeRequest(provider.Endpoint, provider.APIKey, req, provider.Name)
+
+	if err != nil {
+		fmt.Printf("❌ Test failed: %v\n", err)
+		errorType := classifyError(err, response)
+		fmt.Printf("   Error type: %s\n", errorType)
+		return
+	}
+
+	if response.Error != nil {
+		fmt.Printf("❌ API Error: %s\n", response.Error.Message)
+		return
+	}
+
+	if len(response.Choices) > 0 {
+		fmt.Printf("✅ Test successful!\n")
+		fmt.Printf("   Response: %s\n", response.Choices[0].Message.Content[:min(100, len(response.Choices[0].Message.Content))])
+	} else {
+		fmt.Printf("❌ No response received\n")
+	}
+}
+
+func toggleProvider(providerName string, enabled bool) {
+	config, exists := providerConfig.Providers[providerName]
+	if !exists {
+		fmt.Printf("❌ Provider '%s' not found\n", providerName)
+		return
+	}
+
+	config.Enabled = enabled
+	providerConfig.Providers[providerName] = config
+
+	if err := saveProviderConfig(); err != nil {
+		fmt.Printf("❌ Failed to update provider: %v\n", err)
+		return
+	}
+
+	status := "enabled"
+	if !enabled {
+		status = "disabled"
+	}
+	fmt.Printf("✅ Provider '%s' %s\n", providerName, status)
+}
+
+func setProviderPriority(providerName string, priority int) {
+	config, exists := providerConfig.Providers[providerName]
+	if !exists {
+		fmt.Printf("❌ Provider '%s' not found\n", providerName)
+		return
+	}
+
+	config.Priority = priority
+	providerConfig.Providers[providerName] = config
+
+	if err := saveProviderConfig(); err != nil {
+		fmt.Printf("❌ Failed to update priority: %v\n", err)
+		return
+	}
+
+	fmt.Printf("✅ Provider '%s' priority set to %d\n", providerName, priority)
+}
+
+func addProvider(providerName string) {
+	reader := bufio.NewReader(os.Stdin)
+
+	fmt.Printf("🔧 Adding new provider: %s\n", providerName)
+	fmt.Println()
+
+	fmt.Print("Priority (0=highest): ")
+	priorityStr, _ := reader.ReadString('\n')
+	priority := 1
+	fmt.Sscanf(strings.TrimSpace(priorityStr), "%d", &priority)
+
+	fmt.Print("Endpoint URL: ")
+	endpoint, _ := reader.ReadString('\n')
+	endpoint = strings.TrimSpace(endpoint)
+
+	fmt.Print("Model name: ")
+	model, _ := reader.ReadString('\n')
+	model = strings.TrimSpace(model)
+
+	fmt.Print("API Key (or leave blank to use gopass): ")
+	apiKey, _ := reader.ReadString('\n')
+	apiKey = strings.TrimSpace(apiKey)
+
+	config := AIProviderConfig{
+		Priority:    priority,
+		Enabled:     true,
+		MaxRetries:  2,
+		EnvKey:      strings.ToUpper(providerName) + "_API_KEY",
+		EndpointKey: strings.ToUpper(providerName) + "_ENDPOINT",
+		ModelKey:    strings.ToUpper(providerName) + "_MODEL",
+		BYOK:        true,
+		Description: "Custom BYOK provider",
+		GopassKey:   "terminal-ai/" + providerName + "_api_key",
+	}
+
+	providerConfig.Providers[providerName] = config
+
+	providers[providerName] = AIProvider{
+		Name:     providerName,
+		APIKey:   apiKey,
+		Endpoint: endpoint,
+		Model:    model,
+	}
+
+	if err := saveProviderConfig(); err != nil {
+		fmt.Printf("❌ Failed to add provider: %v\n", err)
+		return
+	}
+
+	fmt.Printf("✅ Provider '%s' added successfully\n", providerName)
+	fmt.Printf("   Priority: %d\n", config.Priority)
+	fmt.Printf("   Endpoint: %s\n", endpoint)
+	fmt.Printf("   Model: %s\n", model)
+}
+
+func setDefaultProvider(providerName string) {
+	_, exists := providerConfig.Providers[providerName]
+	if !exists {
+		fmt.Printf("❌ Provider '%s' not found\n", providerName)
+		return
+	}
+
+	providerConfig.DefaultProvider = providerName
+
+	if err := saveProviderConfig(); err != nil {
+		fmt.Printf("❌ Failed to set default provider: %v\n", err)
+		return
+	}
+
+	fmt.Printf("✅ Default provider set to '%s'\n", providerName)
+}
+
+func saveProviderConfig() error {
+	homeDir, _ := os.UserHomeDir()
+	configFile := filepath.Join(homeDir, configDir, "providers.json")
+
+	data, err := json.MarshalIndent(providerConfig, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(configFile, data, 0644)
+}
+
+func showProviderHelp() {
+	fmt.Println("Provider Management Commands:")
+	fmt.Println()
+	fmt.Println("  terminal-ai provider list                      - List all providers with configuration")
+	fmt.Println("  terminal-ai provider test <provider>           - Test a specific provider")
+	fmt.Println("  terminal-ai provider enable <provider>         - Enable a provider")
+	fmt.Println("  terminal-ai provider disable <provider>        - Disable a provider")
+	fmt.Println("  terminal-ai provider priority <provider> <n>   - Set provider priority (0=highest)")
+	fmt.Println("  terminal-ai provider add <provider>            - Add a new custom provider")
+	fmt.Println("  terminal-ai provider default <provider>        - Set default provider")
+	fmt.Println()
+	fmt.Println("Examples:")
+	fmt.Println("  terminal-ai provider list")
+	fmt.Println("  terminal-ai provider test openrouter")
+	fmt.Println("  terminal-ai provider enable gemini")
+	fmt.Println("  terminal-ai provider priority openrouter_custom 0")
+	fmt.Println("  terminal-ai provider add myprovider")
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func chatWithAI(providerName, message string) {
+	if providerName == "" {
+		providerName = providerConfig.DefaultProvider
+	}
+
 	provider, exists := providers[providerName]
 	if !exists {
 		fmt.Printf("Unknown provider: %s\n", providerName)
@@ -565,18 +1017,35 @@ func chatWithAI(providerName, message string) {
 		Stream: false,
 	}
 
-	response, err := makeRequest(provider.Endpoint, provider.APIKey, req, provider.Name)
+	var response *Response
+	var actualProvider string
+	var err error
+
+	if providerConfig.FallbackEnabled {
+		fmt.Printf("🎯 Primary provider: %s\n", providerName)
+		fmt.Printf("🔄 Fallback enabled: %v\n", providerConfig.FallbackEnabled)
+		response, actualProvider, err = makeRequestWithFallback(
+			provider.Endpoint, provider.APIKey, req, providerName,
+		)
+	} else {
+		response, err = makeRequest(provider.Endpoint, provider.APIKey, req, provider.Name)
+		actualProvider = providerName
+	}
+
 	if err != nil {
-		fmt.Printf("Error: %v\n", err)
+		fmt.Printf("❌ Error: %v\n", err)
 		return
 	}
 
 	if response.Error != nil {
-		fmt.Printf("API Error: %s\n", response.Error.Message)
+		fmt.Printf("❌ API Error: %s\n", response.Error.Message)
 		return
 	}
 
 	if len(response.Choices) > 0 {
+		if actualProvider != providerName {
+			fmt.Printf("📡 Response from fallback provider: %s\n", actualProvider)
+		}
 		fmt.Println(response.Choices[0].Message.Content)
 	}
 
@@ -593,7 +1062,7 @@ func chatWithAI(providerName, message string) {
 	msg = strings.TrimSpace(msg)
 
 	if msg != "" {
-		chatWithAI(providerName, msg)
+		chatWithAI(actualProvider, msg)
 	}
 }
 
@@ -627,6 +1096,76 @@ func findMatchingSkills(message string) []Skill {
 	}
 
 	return matches
+}
+
+func makeRequestWithFallback(endpoint, apiKey string, req Request, providerName string) (*Response, string, error) {
+	var lastError error
+	attemptedProviders := make(map[string]bool)
+
+	orderedProviders := getOrderedProviders()
+
+	for _, providerName := range orderedProviders {
+		if attemptedProviders[providerName] {
+			continue
+		}
+
+		attemptedProviders[providerName] = true
+
+		config := providerConfig.Providers[providerName]
+		if !config.Enabled {
+			continue
+		}
+
+		provider := providers[providerName]
+		if provider.APIKey == "" {
+			fmt.Printf("⚠️  Provider '%s' has no API key, skipping...\n", providerName)
+			continue
+		}
+
+		fmt.Printf("🔄 Attempting provider: %s (Priority %d)\n", providerName, config.Priority)
+
+		var response *Response
+		var err error
+
+		for retry := 0; retry <= config.MaxRetries; retry++ {
+			if retry > 0 {
+				fmt.Printf("   Retry %d/%d...\n", retry, config.MaxRetries)
+				time.Sleep(time.Duration(providerConfig.RetryDelayMs) * time.Millisecond)
+			}
+
+			response, err = makeRequest(provider.Endpoint, provider.APIKey, req, provider.Name)
+
+			if err == nil && (response.Error == nil || response.Error.Message == "") {
+				fmt.Printf("✅ Success with provider: %s\n", providerName)
+				return response, providerName, nil
+			}
+
+			errorType := classifyError(err, response)
+			lastError = fmt.Errorf("provider %s: %w", providerName, combineErrors(err, response))
+
+			if errorType == "rate_limit" {
+				fmt.Printf("   ⚠️  Rate limit exceeded on %s\n", providerName)
+				if retry < config.MaxRetries {
+					continue
+				}
+				break
+			} else if errorType == "server_error" || errorType == "network" {
+				fmt.Printf("   ⚠️  %s error on %s\n", errorType, providerName)
+				if retry < config.MaxRetries {
+					continue
+				}
+				break
+			} else if errorType == "timeout" {
+				fmt.Printf("   ⚠️  Timeout on %s\n", providerName)
+				if retry < config.MaxRetries {
+					continue
+				}
+				break
+			}
+		}
+	}
+
+	return nil, "", fmt.Errorf("all providers failed. Last error: %w", lastError)
 }
 
 func makeRequest(endpoint, apiKey string, req Request, provider string) (*Response, error) {
@@ -684,17 +1223,25 @@ func showHelp() {
 	fmt.Println("  terminal-ai user create <name> <role>   - Create user")
 	fmt.Println("  terminal-ai user list                   - List users")
 	fmt.Println("  terminal-ai user delete <name>          - Delete user")
+	fmt.Println("  terminal-ai provider list               - List providers with fallback config")
+	fmt.Println("  terminal-ai provider test <provider>    - Test a specific provider")
+	fmt.Println("  terminal-ai provider enable/disable      - Enable/disable a provider")
+	fmt.Println("  terminal-ai provider priority <p> <n>    - Set provider priority")
+	fmt.Println("  terminal-ai provider add <name>         - Add custom BYOK provider")
+	fmt.Println("  terminal-ai provider default <provider>  - Set default provider")
 	fmt.Println("  terminal-ai web-server                  - Start web server")
 	fmt.Println("  terminal-ai --help                       - Show this help")
 	fmt.Println()
 	fmt.Println("Providers (default: openrouter):")
-	fmt.Println("  - openrouter")
-	fmt.Println("  - gemini")
-	fmt.Println("  - groq")
+	fmt.Println("  - openrouter (priority 1)")
+	fmt.Println("  - gemini (priority 2)")
+	fmt.Println("  - groq (priority 3)")
+	fmt.Println("  - Custom BYOK providers (priority 0+)")
 	fmt.Println()
 	fmt.Println("Documentation:")
-	fmt.Println("  docs/QUICKSTART.md     - Quick start guide")
-	fmt.Println("  docs/SYSTEM.md         - Full system documentation")
-	fmt.Println("  docs/SECURITY.md      - Security guide")
-	fmt.Println("  docs/RASPBERRY_PI.md  - Raspberry Pi deployment")
+	fmt.Println("  docs/QUICKSTART.md         - Quick start guide")
+	fmt.Println("  docs/SYSTEM.md             - Full system documentation")
+	fmt.Println("  docs/PROVIDER_CONFIG.md    - Provider fallback & BYOK guide")
+	fmt.Println("  docs/SECURITY.md          - Security guide")
+	fmt.Println("  docs/RASPBERRY_PI.md      - Raspberry Pi deployment")
 }

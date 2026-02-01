@@ -159,7 +159,7 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 
 	providerName := req.Provider
 	if providerName == "" {
-		providerName = "openrouter"
+		providerName = providerConfig.DefaultProvider
 	}
 
 	provider, exists := providers[providerName]
@@ -193,11 +193,26 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 		messages[len(messages)-1].Content += context
 	}
 
-	response, err := makeRequest(provider.Endpoint, provider.APIKey, Request{
-		Model:    provider.Model,
-		Messages: messages,
-		Stream:   false,
-	}, provider.Name)
+	var response *Response
+	var actualProvider string
+	var err error
+
+	if providerConfig.FallbackEnabled {
+		response, actualProvider, err = makeRequestWithFallback(
+			provider.Endpoint, provider.APIKey, Request{
+				Model:    provider.Model,
+				Messages: messages,
+				Stream:   false,
+			}, providerName,
+		)
+	} else {
+		response, err = makeRequest(provider.Endpoint, provider.APIKey, Request{
+			Model:    provider.Model,
+			Messages: messages,
+			Stream:   false,
+		}, provider.Name)
+		actualProvider = providerName
+	}
 
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -219,6 +234,10 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 	resp := ChatResponse{
 		Response:  content,
 		Timestamp: time.Now().Format(time.RFC3339),
+	}
+
+	if actualProvider != req.Provider && req.Provider != "" {
+		resp.Response = fmt.Sprintf("[Provider: %s] %s", actualProvider, content)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
