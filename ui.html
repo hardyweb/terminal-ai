@@ -262,14 +262,12 @@
                 <!-- Input Area -->
                 <div class="border-t border-slate-700 p-4 bg-slate-900/50">
                     <div class="flex gap-3 items-end">
-                        <input type="text" id="messageInput" 
-                               placeholder="Ask me anything about your notes..." 
-                               class="input-field flex-1 resize-none" 
-                               onkeypress="if(event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage(); }">
+                         <input type="text" id="messageInput" 
+                                placeholder="Ask me anything about your notes..." 
+                                class="input-field flex-1 resize-none" 
+                                onkeypress="if(event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage(); }">
                         <select id="providerSelect" class="input-field cursor-pointer">
-                            <option value="openrouter">🌐 OpenRouter</option>
-                            <option value="gemini">🧠 Gemini</option>
-                            <option value="groq">⚡ Groq</option>
+                            <option value="">Loading...</option>
                         </select>
                         <button onclick="sendMessage()" class="btn-primary px-5 py-3 flex items-center gap-2">
                             <span id="sendIcon">📤</span>
@@ -352,11 +350,73 @@
                         </div>
                     </div>
                 </div>
-                
+
+                <!-- Settings -->
+                <div class="card p-5">
+                    <button onclick="openSettings()" class="w-full btn-secondary flex items-center justify-center gap-2">
+                        <span>⚙️</span>
+                        <span>Provider Settings</span>
+                    </button>
+                    <p class="text-xs text-slate-500 mt-2 text-center">
+                        Add, manage, and configure AI providers
+                    </p>
+                </div>
+
                 <!-- Close Sidebar Button (Mobile) -->
                 <button onclick="closeSidebar()" class="lg:hidden btn-secondary w-full">
                     Close
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div class="card w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+            <div class="p-6 border-b border-slate-700 flex justify-between items-center">
+                <h2 class="text-2xl font-bold flex items-center gap-2">
+                    <span>⚙️</span>
+                    <span>Provider Settings</span>
+                </h2>
+                <button onclick="closeSettings()" class="text-slate-400 hover:text-white transition-colors">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+
+            <div class="p-6 flex-1 overflow-y-auto">
+                <!-- Add New Provider Form -->
+                <div class="mb-8">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <span class="text-emerald-400">➕</span>
+                        <span>Add New Provider</span>
+                    </h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <input type="text" id="newProviderName" placeholder="Provider Name" class="input-field">
+                        <input type="number" id="newProviderPriority" placeholder="Priority (0=highest)" class="input-field" min="0">
+                        <input type="text" id="newProviderEndpoint" placeholder="Endpoint URL" class="input-field md:col-span-2">
+                        <input type="text" id="newProviderModel" placeholder="Model Name" class="input-field">
+                        <input type="password" id="newProviderApiKey" placeholder="API Key (optional)" class="input-field">
+                    </div>
+                    <button onclick="addNewProvider()" class="btn-primary mt-4">
+                        Add Provider
+                    </button>
+                </div>
+
+                <!-- Providers List -->
+                <div>
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <span class="text-emerald-400">📋</span>
+                        <span>Configured Providers</span>
+                    </h3>
+                    <div id="providersList" class="space-y-3">
+                        <div class="flex items-center gap-2 text-slate-400">
+                            <div class="w-4 h-4 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin"></div>
+                            <span class="text-sm">Loading providers...</span>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -620,7 +680,38 @@
         }
 
         async function loadDashboard() {
-            await Promise.all([loadSkills(), loadRAGStats(), loadChatHistory()]);
+            await Promise.all([loadSkills(), loadRAGStats(), loadChatHistory(), loadProviderSelect()]);
+        }
+
+        async function loadProviderSelect() {
+            try {
+                const response = await fetch('/api/providers', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const providers = await response.json();
+
+                const select = document.getElementById('providerSelect');
+                const currentValue = select.value;
+
+                select.innerHTML = providers.map(p => `
+                    <option value="${p.name}" ${p.is_default ? 'selected' : ''} ${!p.enabled ? 'disabled' : ''}>
+                        ${p.byok ? '🔐' : '🌐'} ${p.name} ${p.is_default ? '(Default)' : ''}
+                    </option>
+                `).join('');
+
+                if (currentValue && providers.find(p => p.name === currentValue)) {
+                    select.value = currentValue;
+                }
+            } catch (error) {
+                console.error('Failed to load providers:', error);
+                const select = document.getElementById('providerSelect');
+                select.innerHTML = `<option value="">Error: ${error.message}</option>`;
+            }
         }
 
 
@@ -811,6 +902,227 @@
             this.style.height = 'auto';
             this.style.height = Math.min(this.scrollHeight, 120) + 'px';
         });
+
+        async function openSettings() {
+            document.getElementById('settingsModal').classList.remove('hidden');
+            await loadProviders();
+        }
+
+        async function closeSettings() {
+            document.getElementById('settingsModal').classList.add('hidden');
+            await loadProviderSelect();
+        }
+
+        async function loadProviders() {
+            try {
+                const response = await fetch('/api/providers', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const providers = await response.json();
+                renderProviders(providers);
+            } catch (error) {
+                console.error('Failed to load providers:', error);
+                document.getElementById('providersList').innerHTML =
+                    `<div class="bg-red-500/10 border border-red-500/30 rounded-xl p-4 text-red-400">
+                        <div class="font-semibold mb-1">Failed to load providers</div>
+                        <div class="text-sm text-slate-400">${error.message}</div>
+                    </div>`;
+            }
+        }
+
+        function renderProviders(providers) {
+            const list = document.getElementById('providersList');
+
+            if (!providers || providers.length === 0) {
+                list.innerHTML = '<p class="text-slate-500 text-sm">No providers configured</p>';
+                return;
+            }
+
+            list.innerHTML = providers.map(p => `
+                <div class="bg-slate-800/50 rounded-xl p-4 border border-slate-700 ${p.enabled ? '' : 'opacity-60'}">
+                    <div class="flex justify-between items-start mb-3">
+                        <div class="flex-1">
+                            <div class="flex items-center gap-2">
+                                <h4 class="font-semibold text-lg">${escapeHtml(p.name)}</h4>
+                                ${p.is_default ? '<span class="bg-emerald-500/20 text-emerald-400 text-xs px-2 py-1 rounded-full">DEFAULT</span>' : ''}
+                                ${p.byok ? '<span class="bg-blue-500/20 text-blue-400 text-xs px-2 py-1 rounded-full">BYOK</span>' : ''}
+                                ${p.enabled ? '<span class="bg-green-500/20 text-green-400 text-xs px-2 py-1 rounded-full">ENABLED</span>' : '<span class="bg-red-500/20 text-red-400 text-xs px-2 py-1 rounded-full">DISABLED</span>'}
+                            </div>
+                            <div class="text-sm text-slate-400 mt-1">Priority: ${p.priority}</div>
+                            <div class="text-sm text-slate-400">Model: ${escapeHtml(p.model)}</div>
+                            <div class="text-xs text-slate-500 mt-1 break-all">Endpoint: ${escapeHtml(p.endpoint)}</div>
+                        </div>
+                        <button onclick="deleteProvider('${p.name}')" class="text-red-400 hover:text-red-300 transition-colors">
+                            🗑️
+                        </button>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        ${p.enabled ? `
+                            <button onclick="toggleProvider('${p.name}', false)" class="btn-secondary text-xs px-3 py-1">
+                                Disable
+                            </button>
+                        ` : `
+                            <button onclick="toggleProvider('${p.name}', true)" class="btn-primary text-xs px-3 py-1">
+                                Enable
+                            </button>
+                        `}
+                        <button onclick="testProvider('${p.name}')" class="btn-secondary text-xs px-3 py-1">
+                            Test
+                        </button>
+                        <button onclick="setDefaultProvider('${p.name}')" class="btn-secondary text-xs px-3 py-1">
+                            Set Default
+                        </button>
+                        <div class="flex items-center gap-2 ml-auto">
+                            <label class="text-sm text-slate-400">Priority:</label>
+                            <input type="number" min="0" max="99" value="${p.priority}"
+                                   onchange="updateProviderPriority('${p.name}', this.value)"
+                                   class="bg-slate-900 border border-slate-700 rounded px-2 py-1 w-16 text-sm">
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function addNewProvider() {
+            const name = document.getElementById('newProviderName').value.trim();
+            const priority = parseInt(document.getElementById('newProviderPriority').value) || 1;
+            const endpoint = document.getElementById('newProviderEndpoint').value.trim();
+            const model = document.getElementById('newProviderModel').value.trim();
+            const apiKey = document.getElementById('newProviderApiKey').value.trim();
+
+            if (!name || !endpoint || !model) {
+                alert('Please fill in Name, Endpoint, and Model');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/providers', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({ name, priority, endpoint, model, api_key: apiKey })
+                });
+
+                if (!response.ok) {
+                    const error = await response.text();
+                    throw new Error(error);
+                }
+
+                document.getElementById('newProviderName').value = '';
+                document.getElementById('newProviderPriority').value = '';
+                document.getElementById('newProviderEndpoint').value = '';
+                document.getElementById('newProviderModel').value = '';
+                document.getElementById('newProviderApiKey').value = '';
+
+                await loadProviders();
+                await loadProviderSelect();
+            } catch (error) {
+                alert('Failed to add provider: ' + error.message);
+            }
+        }
+
+        async function toggleProvider(name, enabled) {
+            try {
+                const endpoint = enabled ? `/api/providers/${name}/enable` : `/api/providers/${name}/disable`;
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (!response.ok) {
+                    throw new Error(await response.text());
+                }
+
+                await loadProviders();
+            } catch (error) {
+                alert('Failed to toggle provider: ' + error.message);
+            }
+        }
+
+        async function testProvider(name) {
+            try {
+                const response = await fetch(`/api/providers/${name}/test`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (!response.ok) {
+                    throw new Error(await response.text());
+                }
+
+                const data = await response.json();
+                alert(`Test successful!\nResponse: ${data.response}`);
+            } catch (error) {
+                alert('Test failed: ' + error.message);
+            }
+        }
+
+        async function setDefaultProvider(name) {
+            try {
+                const response = await fetch(`/api/providers/${name}/default`, {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (!response.ok) {
+                    throw new Error(await response.text());
+                }
+
+                await loadProviders();
+            } catch (error) {
+                alert('Failed to set default provider: ' + error.message);
+            }
+        }
+
+        async function updateProviderPriority(name, priority) {
+            try {
+                const response = await fetch(`/api/providers/${name}/priority`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({ priority: parseInt(priority) })
+                });
+
+                if (!response.ok) {
+                    throw new Error(await response.text());
+                }
+
+                await loadProviders();
+            } catch (error) {
+                alert('Failed to update priority: ' + error.message);
+                await loadProviders();
+            }
+        }
+
+        async function deleteProvider(name) {
+            if (!confirm(`Delete provider '${name}'?`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/providers/${name}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (!response.ok) {
+                    throw new Error(await response.text());
+                }
+
+                await loadProviders();
+            } catch (error) {
+                alert('Failed to delete provider: ' + error.message);
+            }
+        }
     </script>
 </body>
 </html>

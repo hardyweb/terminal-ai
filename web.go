@@ -84,12 +84,21 @@ func startWebServer() {
 	router.HandleFunc("/api/history/{id}", authenticate(handleGetSession)).Methods("GET")
 	router.HandleFunc("/api/history/{id}", authenticate(handleUpdateSession)).Methods("PUT")
 	router.HandleFunc("/api/history/{id}", authenticate(handleDeleteSession)).Methods("DELETE")
+	router.HandleFunc("/api/providers", authenticate(handleListProviders)).Methods("GET")
+	router.HandleFunc("/api/providers/{name}", authenticate(handleGetProvider)).Methods("GET")
+	router.HandleFunc("/api/providers/{name}/enable", authenticate(handleEnableProvider)).Methods("POST")
+	router.HandleFunc("/api/providers/{name}/disable", authenticate(handleDisableProvider)).Methods("POST")
+	router.HandleFunc("/api/providers/{name}/priority", authenticate(handleSetProviderPriority)).Methods("PUT")
+	router.HandleFunc("/api/providers/{name}/default", authenticate(handleSetDefaultProvider)).Methods("POST")
+	router.HandleFunc("/api/providers/{name}/test", authenticate(handleTestProvider)).Methods("POST")
+	router.HandleFunc("/api/providers", authenticate(handleAddProvider)).Methods("POST")
+	router.HandleFunc("/api/providers/{name}", authenticate(handleDeleteProvider)).Methods("DELETE")
 	router.HandleFunc("/health", handleHealth).Methods("GET")
 
 	corsMiddleware := func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 			if r.Method == "OPTIONS" {
@@ -758,4 +767,319 @@ func handlePublicChat(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+type ProviderInfo struct {
+	Name        string `json:"name"`
+	Priority    int    `json:"priority"`
+	Enabled     bool   `json:"enabled"`
+	MaxRetries  int    `json:"max_retries"`
+	Endpoint    string `json:"endpoint"`
+	Model       string `json:"model"`
+	BYOK        bool   `json:"byok"`
+	IsDefault   bool   `json:"is_default"`
+	APIKey      string `json:"api_key"`
+	Description string `json:"description"`
+}
+
+type AddProviderRequest struct {
+	Name     string `json:"name"`
+	Priority int    `json:"priority"`
+	Endpoint string `json:"endpoint"`
+	Model    string `json:"model"`
+	APIKey   string `json:"api_key"`
+}
+
+type SetPriorityRequest struct {
+	Priority int `json:"priority"`
+}
+
+func handleListProviders(w http.ResponseWriter, r *http.Request) {
+	var providerList []ProviderInfo
+
+	orderedProviders := getOrderedProviders()
+
+	for _, providerName := range orderedProviders {
+		config := providerConfig.Providers[providerName]
+		provider := providers[providerName]
+
+		info := ProviderInfo{
+			Name:        providerName,
+			Priority:    config.Priority,
+			Enabled:     config.Enabled,
+			MaxRetries:  config.MaxRetries,
+			Endpoint:    provider.Endpoint,
+			Model:       provider.Model,
+			BYOK:        config.BYOK,
+			IsDefault:   providerName == providerConfig.DefaultProvider,
+			Description: config.Description,
+		}
+
+		if provider.APIKey != "" {
+			info.APIKey = "***configured***"
+		}
+
+		providerList = append(providerList, info)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(providerList)
+}
+
+func handleGetProvider(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	providerName := vars["name"]
+
+	config, exists := providerConfig.Providers[providerName]
+	if !exists {
+		http.Error(w, "Provider not found", http.StatusNotFound)
+		return
+	}
+
+	provider := providers[providerName]
+
+	info := ProviderInfo{
+		Name:        providerName,
+		Priority:    config.Priority,
+		Enabled:     config.Enabled,
+		MaxRetries:  config.MaxRetries,
+		Endpoint:    provider.Endpoint,
+		Model:       provider.Model,
+		BYOK:        config.BYOK,
+		IsDefault:   providerName == providerConfig.DefaultProvider,
+		Description: config.Description,
+	}
+
+	if provider.APIKey != "" {
+		info.APIKey = "***configured***"
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(info)
+}
+
+func handleEnableProvider(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	providerName := vars["name"]
+
+	config, exists := providerConfig.Providers[providerName]
+	if !exists {
+		http.Error(w, "Provider not found", http.StatusNotFound)
+		return
+	}
+
+	config.Enabled = true
+	providerConfig.Providers[providerName] = config
+
+	if err := saveProviderConfig(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "enabled"})
+}
+
+func handleDisableProvider(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	providerName := vars["name"]
+
+	config, exists := providerConfig.Providers[providerName]
+	if !exists {
+		http.Error(w, "Provider not found", http.StatusNotFound)
+		return
+	}
+
+	config.Enabled = false
+	providerConfig.Providers[providerName] = config
+
+	if err := saveProviderConfig(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "disabled"})
+}
+
+func handleSetProviderPriority(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	providerName := vars["name"]
+
+	var req SetPriorityRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	config, exists := providerConfig.Providers[providerName]
+	if !exists {
+		http.Error(w, "Provider not found", http.StatusNotFound)
+		return
+	}
+
+	config.Priority = req.Priority
+	providerConfig.Providers[providerName] = config
+
+	if err := saveProviderConfig(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"status": "updated", "priority": req.Priority})
+}
+
+func handleSetDefaultProvider(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	providerName := vars["name"]
+
+	_, exists := providerConfig.Providers[providerName]
+	if !exists {
+		http.Error(w, "Provider not found", http.StatusNotFound)
+		return
+	}
+
+	providerConfig.DefaultProvider = providerName
+
+	if err := saveProviderConfig(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"default_provider": providerName})
+}
+
+func handleTestProvider(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	providerName := vars["name"]
+
+	config, exists := providerConfig.Providers[providerName]
+	if !exists {
+		http.Error(w, "Provider not found", http.StatusNotFound)
+		return
+	}
+
+	if !config.Enabled {
+		http.Error(w, "Provider is disabled", http.StatusBadRequest)
+		return
+	}
+
+	provider, exists := providers[providerName]
+	if !exists {
+		http.Error(w, "Provider not initialized", http.StatusNotFound)
+		return
+	}
+
+	if provider.APIKey == "" {
+		http.Error(w, "API key not configured", http.StatusInternalServerError)
+		return
+	}
+
+	req := Request{
+		Model: provider.Model,
+		Messages: []Message{
+			{Role: "user", Content: "Hello! Say 'Test successful' if you receive this."},
+		},
+		Stream: false,
+	}
+
+	response, err := makeRequest(provider.Endpoint, provider.APIKey, req, provider.Name)
+
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if response.Error != nil {
+		http.Error(w, response.Error.Message, http.StatusInternalServerError)
+		return
+	}
+
+	var content string
+	if len(response.Choices) > 0 {
+		content = response.Choices[0].Message.Content
+		if len(content) > 100 {
+			content = content[:100]
+		}
+	} else {
+		content = "No response received"
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "success", "response": content})
+}
+
+func handleAddProvider(w http.ResponseWriter, r *http.Request) {
+	var req AddProviderRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+
+	if req.Name == "" {
+		http.Error(w, "Provider name is required", http.StatusBadRequest)
+		return
+	}
+
+	if _, exists := providerConfig.Providers[req.Name]; exists {
+		http.Error(w, "Provider already exists", http.StatusConflict)
+		return
+	}
+
+	config := AIProviderConfig{
+		Priority:    req.Priority,
+		Enabled:     true,
+		MaxRetries:  2,
+		EnvKey:      strings.ToUpper(req.Name) + "_API_KEY",
+		EndpointKey: strings.ToUpper(req.Name) + "_ENDPOINT",
+		ModelKey:    strings.ToUpper(req.Name) + "_MODEL",
+		BYOK:        true,
+		Description: "Custom BYOK provider",
+		GopassKey:   "terminal-ai/" + req.Name + "_api_key",
+	}
+
+	providerConfig.Providers[req.Name] = config
+
+	providers[req.Name] = AIProvider{
+		Name:     req.Name,
+		APIKey:   req.APIKey,
+		Endpoint: req.Endpoint,
+		Model:    req.Model,
+	}
+
+	if err := saveProviderConfig(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"status": "created", "name": req.Name})
+}
+
+func handleDeleteProvider(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	providerName := vars["name"]
+
+	if providerName == providerConfig.DefaultProvider {
+		http.Error(w, "Cannot delete default provider", http.StatusBadRequest)
+		return
+	}
+
+	if _, exists := providerConfig.Providers[providerName]; !exists {
+		http.Error(w, "Provider not found", http.StatusNotFound)
+		return
+	}
+
+	delete(providerConfig.Providers, providerName)
+	delete(providers, providerName)
+
+	if err := saveProviderConfig(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
 }
