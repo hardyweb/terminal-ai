@@ -89,6 +89,28 @@ Contoh:
 ./terminal-ai groq "Help me with code"
 ```
 
+### Streaming Mode (Chunk by Chunk Response)
+
+Terminal AI CLI menyokong **streaming responses** - response muncul token-by-token secara real-time:
+
+```bash
+# Streaming mode (default - response muncul token by token)
+./terminal-ai "Write a story"
+
+# Disable streaming - tunggu response lengkap baru paparkan
+./terminal-ai --no-streaming "Write a story"
+./terminal-ai -s "Write a story"
+
+# atau guna environment variable
+export STREAMING=false
+./terminal-ai "Write a story"
+```
+
+**Kelebihan Streaming:**
+- Response muncul lebih cepat (tak perlu tunggu lengkap)
+- Macam chat dengan manusia (token by token)
+- Boleh stop bila-bila masa (Ctrl+C)
+
 ### Web Fetch Tool
 
 Baca kandungan dari website:
@@ -211,13 +233,69 @@ GEMINI_MODEL=gemini-2.0-flash
 GROQ_API_KEY=your_key_here
 GROQ_ENDPOINT=https://api.groq.com/openai/v1/chat/completions
 GROQ_MODEL=llama-3.3-70b-versatile
+
+# Streaming mode (true/false)
+# true = streaming (chunk by chunk), false = single response
+STREAMING=true
+```
+
+## Timeout Handling
+
+### CLI Timeout
+
+CLI streaming ada timeout yang panjang untuk response panjang:
+
+- **Timeout:** 5 minit (300 saat)
+- **Activity monitoring:** Warning jika tiada activity selama 2 minit
+- **Continue option:** Boleh tekan Enter untuk sambung tunggu
+
+```bash
+# Jika timeout warning keluar:
+⚠️  No activity for 2 minutes... (stream may be slow)
+   Press Enter to continue waiting, or Ctrl+C to cancel
+```
+
+### Web UI Timeout Recovery
+
+Web UI ada fitur timeout recovery untuk response panjang:
+
+1. **Progress saving:** Simpan progress ke localStorage setiap chunk
+2. **Timeout detection:** Auto-detect bila connection timeout
+3. **Continue button:** Papar button "Continue Response" jika timeout
+4. **Resume capability:** Sambung dari posisi terakhir
+
+```bash
+# Jika stream timeout dalam Web UI:
+- Partial response dipaparkan
+- Button "Continue Response" muncul
+- Klik untuk sambung dari posisi terakhir
+```
+
+### Tips untuk Response Panjang
+
+```bash
+# 1. Gunakan --no-streaming untuk response sekali gus
+./terminal-ai --no-streaming "Write a 5000 word article"
+
+# 2. Gunakan provider yang lebih cepat (Groq)
+./terminal-ai groq "Write a long article"
+
+# 3. Bahagi soalan panjang kepada beberapa bahagian
+./terminal-ai "Part 1: Explain quantum computing"
+./terminal-ai "Part 2: What are the applications?"
+
+# 4. Jika timeout dalam Web UI, klik "Continue Response"
 ```
 
 ## Contoh Usage Lengkap
 
 ```bash
-# Chat biasa
+# Chat biasa (streaming - token by token)
 ./terminal-ai "Explain RAG"
+
+# Chat tanpa streaming (tunggu response lengkap)
+./terminal-ai --no-streaming "Explain RAG"
+./terminal-ai -s "Write a long article"
 
 # Fetch web content
 ./terminal-ai web https://en.wikipedia.org/wiki/Quantum_computing
@@ -241,8 +319,25 @@ GROQ_MODEL=llama-3.3-70b-versatile
 ## Troubleshooting
 
 ### Jika timeout error:
-- Pastikan internet connection stabil
-- Cuba guna provider lain (gemini/groq biasanya lebih cepat)
+
+**CLI Timeout:**
+```bash
+# Cuba gunakan --no-streaming untuk response sekali gus
+./terminal-ai --no-streaming "Long request"
+
+# Cuba provider lain yang lebih cepat
+./terminal-ai groq "Your request"
+```
+
+**Web UI Timeout:**
+- Jika timeout, response partial akan dipaparkan
+- Klik button "Continue Response" untuk sambung
+- Progress disimpan secara automatik
+
+**Tips:**
+- Gunakan `--no-streaming` untuk response yang sangat panjang
+- Gunakan Groq (paling cepat) untuk request panjang
+- Bahagi request panjang kepada beberapa bahagian kecil
 
 ### Jika API key error:
 - Check `~/.config/terminal-ai/.env` file

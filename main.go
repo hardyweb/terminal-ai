@@ -328,6 +328,24 @@ func main() {
 
 	if streamingEnabled {
 		fmt.Println("✅ Streaming mode enabled (chunk by chunk response)")
+	} else {
+		fmt.Println("📦 Single response mode (no streaming)")
+	}
+
+	// Check for --no-streaming flag
+	noStreaming := false
+	for i, arg := range os.Args {
+		if arg == "--no-streaming" || arg == "-s" {
+			noStreaming = true
+			// Remove the flag from args
+			os.Args = append(os.Args[:i], os.Args[i+1:]...)
+			break
+		}
+	}
+
+	if noStreaming {
+		streamingEnabled = false
+		fmt.Println("📦 Streaming disabled for this request")
 	}
 
 	if err := loadProviderConfig(); err != nil {
@@ -2395,7 +2413,8 @@ func makeStreamingRequest(endpoint, apiKey string, req Request, provider string)
 		}
 	}
 
-	client := &http.Client{Timeout: 120 * time.Second}
+	// Extended timeout for long streaming responses (5 minutes)
+	client := &http.Client{Timeout: 300 * time.Second}
 
 	httpReq, err := http.NewRequest("POST", endpoint, strings.NewReader(string(reqBody)))
 	if err != nil {
@@ -2414,20 +2433,31 @@ func makeStreamingRequest(endpoint, apiKey string, req Request, provider string)
 		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
+	fmt.Println("🔄 Streaming response (timeout: 5 min, Ctrl+C to stop)...")
+
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return err
+		return fmt.Errorf("Connection error: %v\n💡 Tip: Try a shorter question or use a faster provider", err)
 	}
 	defer resp.Body.Close()
 
 	reader := bufio.NewReader(resp.Body)
+	lastActivity := time.Now()
+
 	for {
+		// Check for timeout - if no activity for 2 minutes, warn user
+		if time.Since(lastActivity) > 120*time.Second {
+			fmt.Printf("\n⚠️  No activity for 2 minutes... (stream may be slow)\n")
+			fmt.Printf("   Press Enter to continue waiting, or Ctrl+C to cancel\n")
+			lastActivity = time.Now() // Reset to avoid repeated warnings
+		}
+
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
 				break
 			}
-			return err
+			return fmt.Errorf("Stream error: %v", err)
 		}
 
 		line = strings.TrimSpace(line)
@@ -2446,6 +2476,9 @@ func makeStreamingRequest(endpoint, apiKey string, req Request, provider string)
 		if data == "[DONE]" {
 			break
 		}
+
+		// Update last activity time
+		lastActivity = time.Now()
 
 		// Parse the streaming response
 		var streamResp StreamingResponse
@@ -2509,7 +2542,7 @@ func makeStreamingRequestWithCapture(endpoint, apiKey string, req Request, provi
 		}
 	}
 
-	client := &http.Client{Timeout: 120 * time.Second}
+	client := &http.Client{Timeout: 300 * time.Second} // Extended timeout
 
 	httpReq, err := http.NewRequest("POST", endpoint, strings.NewReader(string(reqBody)))
 	if err != nil {
@@ -2528,21 +2561,32 @@ func makeStreamingRequestWithCapture(endpoint, apiKey string, req Request, provi
 		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
+	fmt.Println("🔄 Receiving streaming response (Ctrl+C to stop)...")
+
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return err
+		return fmt.Errorf("Connection error: %v\n💡 Tip: Try a shorter question or use --no-streaming flag", err)
 	}
 	defer resp.Body.Close()
 
 	var capturedContent strings.Builder
 	reader := bufio.NewReader(resp.Body)
+	lastActivity := time.Now()
+
 	for {
+		// Check for timeout - if no activity for 2 minutes, warn user
+		if time.Since(lastActivity) > 120*time.Second {
+			fmt.Printf("\n⚠️  No activity for 2 minutes... (stream may be slow)\n")
+			fmt.Printf("   Press Enter to continue waiting, or Ctrl+C to cancel\n")
+			lastActivity = time.Now() // Reset
+		}
+
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {
 				break
 			}
-			return err
+			return fmt.Errorf("Stream error: %v", err)
 		}
 
 		line = strings.TrimSpace(line)
@@ -2556,6 +2600,9 @@ func makeStreamingRequestWithCapture(endpoint, apiKey string, req Request, provi
 		}
 
 		data := strings.TrimPrefix(line, "data: ")
+
+		// Update last activity
+		lastActivity = time.Now()
 
 		// Check for stream end
 		if data == "[DONE]" {
@@ -2594,6 +2641,7 @@ func showHelp() {
 	fmt.Println()
 	fmt.Println("Usage:")
 	fmt.Println("  terminal-ai [provider] <message>       - Chat with AI")
+	fmt.Println("  terminal-ai [provider] --no-streaming <message>  - Chat without streaming")
 	fmt.Println("  terminal-ai chat --list/--new/--last/--session <id>  - Chat sessions")
 	fmt.Println("  terminal-ai history list/view/export/delete <id>/clear  - Chat history")
 	fmt.Println("  terminal-ai rag index <dir> / search <query>  - Local RAG")
@@ -2603,6 +2651,15 @@ func showHelp() {
 	fmt.Println("  terminal-ai web <url> / web-server      - Web fetch & server")
 	fmt.Println("  terminal-ai --help                     - Show this help")
 	fmt.Println()
+	fmt.Println("Options:")
+	fmt.Println("  --no-streaming, -s    Disable streaming mode (wait for complete response)")
+	fmt.Println("  STREAMING=false       Environment variable to disable streaming")
+	fmt.Println()
 	fmt.Println("Providers (default: openrouter):")
 	fmt.Println("  - openrouter (1) - gemini (2) - groq (3) - Custom BYOK (0+)")
+	fmt.Println()
+	fmt.Println("Tips for long responses:")
+	fmt.Println("  - Use --no-streaming for complete response at once")
+	fmt.Println("  - If streaming times out, partial response is still saved")
+	fmt.Println("  - Use faster providers (groq) for quicker responses")
 }
