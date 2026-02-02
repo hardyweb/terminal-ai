@@ -57,6 +57,20 @@ type RAGSearchRequest struct {
 	Visibility string `json:"visibility"`
 }
 
+// Helper function to send JSON error responses
+func sendJSONError(w http.ResponseWriter, statusCode int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+// Helper function to send JSON success responses
+func sendJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(data)
+}
+
 func startWebServer() {
 	router := mux.NewRouter()
 
@@ -135,13 +149,13 @@ func serveWebUI(w http.ResponseWriter, r *http.Request) {
 func handleLogin(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+		sendJSONError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
 
 	token, err := securityMgr.Authenticate(req.Username, req.Password)
 	if err != nil {
-		http.Error(w, "Authentication failed", http.StatusUnauthorized)
+		sendJSONError(w, http.StatusUnauthorized, "Authentication failed")
 		return
 	}
 
@@ -161,6 +175,7 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 		securityMgr.Logout(token)
 	}
 
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "logged out"})
 }
@@ -169,14 +184,14 @@ func authenticate(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
-			http.Error(w, "Authorization header required", http.StatusUnauthorized)
+			sendJSONError(w, http.StatusUnauthorized, "Authorization header required")
 			return
 		}
 
 		token := strings.TrimPrefix(authHeader, "Bearer ")
 		username, err := securityMgr.ValidateSession(token)
 		if err != nil {
-			http.Error(w, "Invalid token", http.StatusUnauthorized)
+			sendJSONError(w, http.StatusUnauthorized, "Invalid token")
 			return
 		}
 
@@ -188,7 +203,7 @@ func authenticate(next http.HandlerFunc) http.HandlerFunc {
 func handleChat(w http.ResponseWriter, r *http.Request) {
 	var req ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+		sendJSONError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
 
@@ -199,12 +214,12 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 
 	provider, exists := providers[providerName]
 	if !exists {
-		http.Error(w, "Unknown provider", http.StatusBadRequest)
+		sendJSONError(w, http.StatusBadRequest, "Unknown provider")
 		return
 	}
 
 	if provider.APIKey == "" {
-		http.Error(w, "API key not configured", http.StatusInternalServerError)
+		sendJSONError(w, http.StatusInternalServerError, "API key not configured")
 		return
 	}
 
@@ -251,12 +266,12 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		sendJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	if response.Error != nil {
-		http.Error(w, response.Error.Message, http.StatusInternalServerError)
+		sendJSONError(w, http.StatusInternalServerError, response.Error.Message)
 		return
 	}
 
@@ -278,94 +293,6 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
-}
-
-func handleRAGIndex(w http.ResponseWriter, r *http.Request) {
-	var req RAGIndexRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
-		return
-	}
-
-	username := r.Header.Get("X-Username")
-	visibility := req.Visibility
-	if visibility == "" {
-		visibility = "private"
-	}
-
-	count := 0
-	err := filepath.Walk(req.Directory, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if info.IsDir() {
-			return nil
-		}
-
-		ext := strings.ToLower(filepath.Ext(path))
-		if ext != ".txt" && ext != ".md" && ext != ".json" {
-			return nil
-		}
-
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-
-		keywords := extractKeywords(string(content))
-
-		doc := RAGDocument{
-			Path:       path,
-			Content:    string(content),
-			Keywords:   keywords,
-			IndexedAt:  time.Now().Format(time.RFC3339),
-			Owner:      username,
-			Visibility: visibility,
-		}
-
-		ragIndex.Documents = append(ragIndex.Documents, doc)
-		count++
-		return nil
-	})
-
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if err := saveRAGIndex(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":     "success",
-		"indexed":    count,
-		"total":      len(ragIndex.Documents),
-		"visibility": visibility,
-	})
-}
-
-func handleRAGSearch(w http.ResponseWriter, r *http.Request) {
-	var req RAGSearchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
-		return
-	}
-
-	username := r.Header.Get("X-Username")
-	visibility := req.Visibility
-
-	results := searchRAGWithFilters(req.Query, username, visibility)
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":  "success",
-		"results": results,
-		"count":   len(results),
-	})
 }
 
 func handleListSkills(w http.ResponseWriter, r *http.Request) {
@@ -435,12 +362,12 @@ func handleGetSession(w http.ResponseWriter, r *http.Request) {
 
 	session, err := getSession(sessionID)
 	if err != nil {
-		http.Error(w, "Session not found", http.StatusNotFound)
+		sendJSONError(w, http.StatusNotFound, "Session not found")
 		return
 	}
 
 	if session.User != username {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		sendJSONError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 
@@ -451,7 +378,7 @@ func handleGetSession(w http.ResponseWriter, r *http.Request) {
 func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	var req HistoryCreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+		sendJSONError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
 
@@ -463,12 +390,12 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	provider, exists := providers[providerName]
 	if !exists {
-		http.Error(w, "Unknown provider", http.StatusBadRequest)
+		sendJSONError(w, http.StatusBadRequest, "Unknown provider")
 		return
 	}
 
 	if provider.APIKey == "" {
-		http.Error(w, "API key not configured", http.StatusInternalServerError)
+		sendJSONError(w, http.StatusInternalServerError, "API key not configured")
 		return
 	}
 
@@ -510,12 +437,12 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if aiErr != nil {
-		http.Error(w, aiErr.Error(), http.StatusInternalServerError)
+		sendJSONError(w, http.StatusInternalServerError, aiErr.Error())
 		return
 	}
 
 	if response.Error != nil {
-		http.Error(w, response.Error.Message, http.StatusInternalServerError)
+		sendJSONError(w, http.StatusInternalServerError, response.Error.Message)
 		return
 	}
 
@@ -541,18 +468,18 @@ func handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 
 	session, sessionErr := getSession(sessionID)
 	if sessionErr != nil {
-		http.Error(w, "Session not found", http.StatusNotFound)
+		sendJSONError(w, http.StatusNotFound, "Session not found")
 		return
 	}
 
 	if session.User != username {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		sendJSONError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 
 	var req HistoryUpdateRequest
 	if decodeErr := json.NewDecoder(r.Body).Decode(&req); decodeErr != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+		sendJSONError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
 
@@ -563,12 +490,12 @@ func handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 
 	provider, exists := providers[providerName]
 	if !exists {
-		http.Error(w, "Unknown provider", http.StatusBadRequest)
+		sendJSONError(w, http.StatusBadRequest, "Unknown provider")
 		return
 	}
 
 	if provider.APIKey == "" {
-		http.Error(w, "API key not configured", http.StatusInternalServerError)
+		sendJSONError(w, http.StatusInternalServerError, "API key not configured")
 		return
 	}
 
@@ -614,12 +541,12 @@ func handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if aiErr != nil {
-		http.Error(w, aiErr.Error(), http.StatusInternalServerError)
+		sendJSONError(w, http.StatusInternalServerError, aiErr.Error())
 		return
 	}
 
 	if response.Error != nil {
-		http.Error(w, response.Error.Message, http.StatusInternalServerError)
+		sendJSONError(w, http.StatusInternalServerError, response.Error.Message)
 		return
 	}
 
@@ -645,17 +572,17 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 
 	session, err := getSession(sessionID)
 	if err != nil {
-		http.Error(w, "Session not found", http.StatusNotFound)
+		sendJSONError(w, http.StatusNotFound, "Session not found")
 		return
 	}
 
 	if session.User != username {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		sendJSONError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 
 	if err := deleteSession(sessionID); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		sendJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -701,13 +628,13 @@ func handleUpdateBYOKConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		sendJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	openrouterConfig, exists := providerConfig.Providers["openrouter"]
 	if !exists {
-		http.Error(w, "OpenRouter provider not found", http.StatusNotFound)
+		sendJSONError(w, http.StatusNotFound, "OpenRouter provider not found")
 		return
 	}
 
@@ -721,7 +648,7 @@ func handleUpdateBYOKConfig(w http.ResponseWriter, r *http.Request) {
 	providerConfig.Providers["openrouter"] = openrouterConfig
 
 	if err := saveProviderConfig(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		sendJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -732,7 +659,7 @@ func handleUpdateBYOKConfig(w http.ResponseWriter, r *http.Request) {
 func handleTestBYOK(w http.ResponseWriter, r *http.Request) {
 	openrouterConfig, exists := providerConfig.Providers["openrouter"]
 	if !exists || openrouterConfig.BYOKConfig == nil || !openrouterConfig.BYOKConfig.Enabled {
-		http.Error(w, "BYOK not enabled", http.StatusBadRequest)
+		sendJSONError(w, http.StatusBadRequest, "BYOK not enabled")
 		return
 	}
 
@@ -748,7 +675,7 @@ func handleTestBYOK(w http.ResponseWriter, r *http.Request) {
 	// Get OpenRouter provider
 	provider, exists := providers["openrouter"]
 	if !exists || provider.APIKey == "" {
-		http.Error(w, "OpenRouter not configured", http.StatusBadRequest)
+		sendJSONError(w, http.StatusBadRequest, "OpenRouter not configured")
 		return
 	}
 
@@ -858,10 +785,58 @@ func normalizeProviderKey(name string) string {
 	return result.String()
 }
 
+func handleRAGIndex(w http.ResponseWriter, r *http.Request) {
+	var req RAGIndexRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+
+	if req.Directory == "" {
+		sendJSONError(w, http.StatusBadRequest, "Directory path required")
+		return
+	}
+
+	// Get username from context (set by authenticate middleware)
+	username := r.Header.Get("X-Username")
+	if req.Visibility == "" {
+		req.Visibility = "private"
+	}
+
+	indexDirectoryWithOwner(req.Directory, username, req.Visibility)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":    "success",
+		"directory": req.Directory,
+		"message":   "Directory indexed successfully",
+	})
+}
+
+func handleRAGSearch(w http.ResponseWriter, r *http.Request) {
+	var req RAGSearchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendJSONError(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+
+	// Get username from context
+	username := r.Header.Get("X-Username")
+
+	results := searchRAGWithFilters(req.Query, username, req.Visibility)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":  "success",
+		"results": results,
+		"count":   len(results),
+	})
+}
+
 func handlePublicRAGSearch(w http.ResponseWriter, r *http.Request) {
 	var req RAGSearchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+		sendJSONError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
 
@@ -878,7 +853,7 @@ func handlePublicRAGSearch(w http.ResponseWriter, r *http.Request) {
 func handlePublicChat(w http.ResponseWriter, r *http.Request) {
 	var req ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+		sendJSONError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
 
@@ -889,12 +864,12 @@ func handlePublicChat(w http.ResponseWriter, r *http.Request) {
 
 	provider, exists := providers[providerName]
 	if !exists {
-		http.Error(w, "Unknown provider", http.StatusBadRequest)
+		sendJSONError(w, http.StatusBadRequest, "Unknown provider")
 		return
 	}
 
 	if provider.APIKey == "" {
-		http.Error(w, "API key not configured", http.StatusInternalServerError)
+		sendJSONError(w, http.StatusInternalServerError, "API key not configured")
 		return
 	}
 
@@ -940,12 +915,12 @@ func handlePublicChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		sendJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	if response.Error != nil {
-		http.Error(w, response.Error.Message, http.StatusInternalServerError)
+		sendJSONError(w, http.StatusInternalServerError, response.Error.Message)
 		return
 	}
 
@@ -1032,7 +1007,7 @@ func handleGetProvider(w http.ResponseWriter, r *http.Request) {
 
 	config, exists := providerConfig.Providers[providerName]
 	if !exists {
-		http.Error(w, "Provider not found", http.StatusNotFound)
+		sendJSONError(w, http.StatusNotFound, "Provider not found")
 		return
 	}
 
@@ -1064,7 +1039,7 @@ func handleEnableProvider(w http.ResponseWriter, r *http.Request) {
 
 	config, exists := providerConfig.Providers[providerName]
 	if !exists {
-		http.Error(w, "Provider not found", http.StatusNotFound)
+		sendJSONError(w, http.StatusNotFound, "Provider not found")
 		return
 	}
 
@@ -1072,7 +1047,7 @@ func handleEnableProvider(w http.ResponseWriter, r *http.Request) {
 	providerConfig.Providers[providerName] = config
 
 	if err := saveProviderConfig(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		sendJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -1086,7 +1061,7 @@ func handleDisableProvider(w http.ResponseWriter, r *http.Request) {
 
 	config, exists := providerConfig.Providers[providerName]
 	if !exists {
-		http.Error(w, "Provider not found", http.StatusNotFound)
+		sendJSONError(w, http.StatusNotFound, "Provider not found")
 		return
 	}
 
@@ -1094,7 +1069,7 @@ func handleDisableProvider(w http.ResponseWriter, r *http.Request) {
 	providerConfig.Providers[providerName] = config
 
 	if err := saveProviderConfig(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		sendJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -1108,13 +1083,13 @@ func handleSetProviderPriority(w http.ResponseWriter, r *http.Request) {
 
 	var req SetPriorityRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+		sendJSONError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
 
 	config, exists := providerConfig.Providers[providerName]
 	if !exists {
-		http.Error(w, "Provider not found", http.StatusNotFound)
+		sendJSONError(w, http.StatusNotFound, "Provider not found")
 		return
 	}
 
@@ -1122,7 +1097,7 @@ func handleSetProviderPriority(w http.ResponseWriter, r *http.Request) {
 	providerConfig.Providers[providerName] = config
 
 	if err := saveProviderConfig(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		sendJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -1136,14 +1111,14 @@ func handleSetDefaultProvider(w http.ResponseWriter, r *http.Request) {
 
 	_, exists := providerConfig.Providers[providerName]
 	if !exists {
-		http.Error(w, "Provider not found", http.StatusNotFound)
+		sendJSONError(w, http.StatusNotFound, "Provider not found")
 		return
 	}
 
 	providerConfig.DefaultProvider = providerName
 
 	if err := saveProviderConfig(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		sendJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -1157,23 +1132,23 @@ func handleTestProvider(w http.ResponseWriter, r *http.Request) {
 
 	config, exists := providerConfig.Providers[providerName]
 	if !exists {
-		http.Error(w, "Provider not found", http.StatusNotFound)
+		sendJSONError(w, http.StatusNotFound, "Provider not found")
 		return
 	}
 
 	if !config.Enabled {
-		http.Error(w, "Provider is disabled", http.StatusBadRequest)
+		sendJSONError(w, http.StatusBadRequest, "Provider is disabled")
 		return
 	}
 
 	provider, exists := providers[providerName]
 	if !exists {
-		http.Error(w, "Provider not initialized", http.StatusNotFound)
+		sendJSONError(w, http.StatusNotFound, "Provider not initialized")
 		return
 	}
 
 	if provider.APIKey == "" {
-		http.Error(w, "API key not configured", http.StatusInternalServerError)
+		sendJSONError(w, http.StatusInternalServerError, "API key not configured")
 		return
 	}
 
@@ -1188,12 +1163,12 @@ func handleTestProvider(w http.ResponseWriter, r *http.Request) {
 	response, err := makeRequest(provider.Endpoint, provider.APIKey, req, provider.Name)
 
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		sendJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	if response.Error != nil {
-		http.Error(w, response.Error.Message, http.StatusInternalServerError)
+		sendJSONError(w, http.StatusInternalServerError, response.Error.Message)
 		return
 	}
 
@@ -1214,17 +1189,17 @@ func handleTestProvider(w http.ResponseWriter, r *http.Request) {
 func handleAddProvider(w http.ResponseWriter, r *http.Request) {
 	var req AddProviderRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+		sendJSONError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
 
 	if req.Name == "" {
-		http.Error(w, "Provider name is required", http.StatusBadRequest)
+		sendJSONError(w, http.StatusBadRequest, "Provider name is required")
 		return
 	}
 
 	if _, exists := providerConfig.Providers[req.Name]; exists {
-		http.Error(w, "Provider already exists", http.StatusConflict)
+		sendJSONError(w, http.StatusConflict, "Provider already exists")
 		return
 	}
 
@@ -1250,7 +1225,7 @@ func handleAddProvider(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := saveProviderConfig(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		sendJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -1263,12 +1238,12 @@ func handleDeleteProvider(w http.ResponseWriter, r *http.Request) {
 	providerName := vars["name"]
 
 	if providerName == providerConfig.DefaultProvider {
-		http.Error(w, "Cannot delete default provider", http.StatusBadRequest)
+		sendJSONError(w, http.StatusBadRequest, "Cannot delete default provider")
 		return
 	}
 
 	if _, exists := providerConfig.Providers[providerName]; !exists {
-		http.Error(w, "Provider not found", http.StatusNotFound)
+		sendJSONError(w, http.StatusNotFound, "Provider not found")
 		return
 	}
 
@@ -1276,7 +1251,7 @@ func handleDeleteProvider(w http.ResponseWriter, r *http.Request) {
 	delete(providers, providerName)
 
 	if err := saveProviderConfig(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		sendJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 

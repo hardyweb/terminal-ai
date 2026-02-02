@@ -782,8 +782,8 @@
                 try {
                     data = JSON.parse(text);
                 } catch (e) {
-                    console.error('Failed to parse response:', e);
-                    showError('Invalid response from server');
+                    console.error('Failed to parse response:', e, 'Response text:', text);
+                    showError('Invalid response from server: ' + (text.substring(0, 100) || 'Empty response'));
                     return;
                 }
                 
@@ -928,7 +928,13 @@
 
                     const text = await response.text();
                     console.log('Update session response:', text);
-                    data = JSON.parse(text);
+                    try {
+                        data = JSON.parse(text);
+                    } catch (e) {
+                        console.error('Failed to parse response:', e, 'Response text:', text);
+                        showError('Invalid response from server: ' + (text.substring(0, 100) || 'Empty response'));
+                        return;
+                    }
                 } else {
                     response = await fetch('/api/history', {
                         method: 'POST',
@@ -941,7 +947,13 @@
 
                     const text = await response.text();
                     console.log('Create session response:', text);
-                    data = JSON.parse(text);
+                    try {
+                        data = JSON.parse(text);
+                    } catch (e) {
+                        console.error('Failed to parse response:', e, 'Response text:', text);
+                        showError('Invalid response from server: ' + (text.substring(0, 100) || 'Empty response'));
+                        return;
+                    }
 
                     if (data.session_id) {
                         currentSessionId = data.session_id;
