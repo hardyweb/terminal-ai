@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -88,6 +89,7 @@ func startWebServer() {
 	router.HandleFunc("/api/login", handleLogin).Methods("POST")
 	router.HandleFunc("/api/logout", handleLogout).Methods("POST")
 	router.HandleFunc("/api/chat", authenticate(handleChat)).Methods("POST")
+	router.HandleFunc("/api/chat/stream", authenticate(handleChatStream)).Methods("POST")
 	router.HandleFunc("/api/chat/public", handlePublicChat).Methods("POST")
 	router.HandleFunc("/api/rag/index", authenticate(handleRAGIndex)).Methods("POST")
 	router.HandleFunc("/api/rag/search", authenticate(handleRAGSearch)).Methods("POST")
@@ -293,6 +295,201 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+func handleChatStream(w http.ResponseWriter, r *http.Request) {
+	var req ChatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		fmt.Fprintf(w, "data: {\"error\": \"Invalid request\"}\n\n")
+		return
+	}
+
+	providerName := req.Provider
+	if providerName == "" {
+		providerName = providerConfig.DefaultProvider
+	}
+
+	provider, exists := providers[providerName]
+	if !exists {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		fmt.Fprintf(w, "data: {\"error\": \"Unknown provider\"}\n\n")
+		return
+	}
+
+	if provider.APIKey == "" {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		fmt.Fprintf(w, "data: {\"error\": \"API key not configured\"}\n\n")
+		return
+	}
+
+	messages := req.History
+	if len(messages) == 0 {
+		messages = []Message{{Role: "user", Content: req.Message}}
+	} else {
+		messages = append(messages, Message{Role: "user", Content: req.Message})
+	}
+
+	username := r.Header.Get("X-Username")
+	results := searchRAGWithFilters(req.Message, username, "")
+	if len(results) > 0 {
+		context := "\n\nRelevant documents:\n"
+		for _, doc := range results {
+			contentLen := len(doc.Content)
+			if contentLen > 200 {
+				contentLen = 200
+			}
+			context += fmt.Sprintf("- %s: %s\n", doc.Path, doc.Content[:contentLen])
+		}
+		messages[len(messages)-1].Content += context
+	}
+
+	// Set SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	// Get flusher
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		fmt.Fprintf(w, "data: {\"error\": \"Streaming not supported\"}\n\n")
+		return
+	}
+
+	// Build request
+	aiReq := Request{
+		Model:    provider.Model,
+		Messages: messages,
+		Stream:   true,
+	}
+
+	var reqBody []byte
+	var err error
+
+	// Check if OpenRouter with BYOK enabled
+	if providerName == "openrouter" {
+		if config, exists := providerConfig.Providers["openrouter"]; exists && config.BYOKConfig != nil && config.BYOKConfig.Enabled {
+			openRouterReq := OpenRouterRequest{
+				Model:    aiReq.Model,
+				Messages: aiReq.Messages,
+				Stream:   true,
+				Provider: &OpenRouterProvider{
+					AllowFallbacks: config.BYOKConfig.AllowFallbackToShared,
+					Order:          config.BYOKConfig.ProviderOrder,
+				},
+			}
+			reqBody, err = json.Marshal(openRouterReq)
+		} else {
+			reqBody, err = json.Marshal(aiReq)
+		}
+	} else {
+		reqBody, err = json.Marshal(aiReq)
+	}
+
+	if err != nil {
+		fmt.Fprintf(w, "data: {\"error\": \"Failed to marshal request\"}\n\n")
+		flusher.Flush()
+		return
+	}
+
+	// Make HTTP request with extended timeout for streaming
+	// Using 300 seconds (5 minutes) to handle long articles
+	client := &http.Client{Timeout: 300 * time.Second}
+	httpReq, err := http.NewRequest("POST", provider.Endpoint, strings.NewReader(string(reqBody)))
+	if err != nil {
+		fmt.Fprintf(w, "data: {\"error\": \"%s\"}\n\n", err.Error())
+		flusher.Flush()
+		return
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if providerName == "openrouter" {
+		httpReq.Header.Set("Authorization", "Bearer "+provider.APIKey)
+		httpReq.Header.Set("HTTP-Referer", "https://terminal-ai.local")
+		httpReq.Header.Set("X-Title", "Terminal AI CLI")
+	} else if providerName == "gemini" {
+		httpReq.Header.Set("x-goog-api-key", provider.APIKey)
+	} else {
+		httpReq.Header.Set("Authorization", "Bearer "+provider.APIKey)
+	}
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		fmt.Fprintf(w, "data: {\"error\": \"%s\"}\n\n", err.Error())
+		flusher.Flush()
+		return
+	}
+	defer resp.Body.Close()
+
+	// Stream response
+	reader := bufio.NewReader(resp.Body)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			fmt.Fprintf(w, "data: {\"error\": \"%s\"}\n\n", err.Error())
+			flusher.Flush()
+			return
+		}
+
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		// Check for SSE data prefix
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		data := strings.TrimPrefix(line, "data: ")
+
+		// Check for stream end
+		if data == "[DONE]" {
+			fmt.Fprintf(w, "data: [DONE]\n\n")
+			flusher.Flush()
+			break
+		}
+
+		// Parse the streaming response
+		var streamResp StreamingResponse
+		if err := json.Unmarshal([]byte(data), &streamResp); err != nil {
+			// Some providers might send different formats, skip unparseable lines
+			continue
+		}
+
+		// Check for API errors in stream
+		if streamResp.Error != nil {
+			fmt.Fprintf(w, "data: {\"error\": \"%s\"}\n\n", streamResp.Error.Message)
+			flusher.Flush()
+			return
+		}
+
+		// Extract content
+		if len(streamResp.Choices) > 0 {
+			content := streamResp.Choices[0].Delta.Content
+			if content != "" {
+				// Escape quotes in content for JSON
+				content = strings.ReplaceAll(content, "\\", "\\\\")
+				content = strings.ReplaceAll(content, "\"", "\\\"")
+				fmt.Fprintf(w, "data: {\"content\": \"%s\"}\n\n", content)
+				flusher.Flush()
+			}
+		}
+	}
+
+	// Send final DONE message
+	fmt.Fprintf(w, "data: [DONE]\n\n")
+	flusher.Flush()
 }
 
 func handleListSkills(w http.ResponseWriter, r *http.Request) {

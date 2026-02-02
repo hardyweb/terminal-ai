@@ -90,6 +90,19 @@ type Choice struct {
 	Message Message `json:"message"`
 }
 
+type StreamingDelta struct {
+	Content string `json:"content"`
+}
+
+type StreamingChoice struct {
+	Delta StreamingDelta `json:"delta"`
+}
+
+type StreamingResponse struct {
+	Choices []StreamingChoice `json:"choices"`
+	Error   *APIError         `json:"error,omitempty"`
+}
+
 type APIError struct {
 	Message string `json:"message"`
 	Type    string `json:"type"`
@@ -140,6 +153,7 @@ var chatHistory ChatHistory
 var providers map[string]AIProvider
 var useGopass bool
 var providerConfig ProviderGlobalConfig
+var streamingEnabled bool
 
 func getSecretFromGopass(path string) (string, error) {
 	cmd := exec.Command("gopass", "show", path)
@@ -310,6 +324,11 @@ func main() {
 	godotenv.Load(".env")
 
 	useGopass = os.Getenv("USE_GOPASS") == "true"
+	streamingEnabled = os.Getenv("STREAMING") != "false" // Default to true if not set or set to true
+
+	if streamingEnabled {
+		fmt.Println("✅ Streaming mode enabled (chunk by chunk response)")
+	}
 
 	if err := loadProviderConfig(); err != nil {
 		fmt.Printf("Warning: Failed to load provider config: %v\n", err)
@@ -1892,40 +1911,65 @@ func sessionWithHistory(session *ChatSession, providerName, message string) {
 	req := Request{
 		Model:    provider.Model,
 		Messages: messages,
-		Stream:   false,
+		Stream:   streamingEnabled,
 	}
 
 	var response *Response
 	var actualProvider string
 	var err error
+	var streamingErr error
+	var fullResponse string
 
-	if providerConfig.FallbackEnabled {
-		response, actualProvider, err = makeRequestWithFallback(
-			provider.Endpoint, provider.APIKey, req, providerName,
-		)
-	} else {
-		response, err = makeRequest(provider.Endpoint, provider.APIKey, req, provider.Name)
-		actualProvider = providerName
-	}
-
-	if err != nil {
-		fmt.Printf("❌ Error: %v\n", err)
-		return
-	}
-
-	if response.Error != nil {
-		fmt.Printf("❌ API Error: %s\n", response.Error.Message)
-		return
-	}
-
-	if len(response.Choices) > 0 {
-		if actualProvider != providerName {
-			fmt.Printf("📡 Response from fallback provider: %s\n", actualProvider)
-		} else {
-			fmt.Printf("✅ Success with provider: %s\n", actualProvider)
+	if streamingEnabled {
+		// Use streaming mode
+		if providerConfig.FallbackEnabled {
+			fmt.Printf("🔄 Fallback enabled: %v\n", providerConfig.FallbackEnabled)
 		}
-		fmt.Println(response.Choices[0].Message.Content)
-		updateSession(session.ID, "assistant", response.Choices[0].Message.Content)
+		fmt.Println("📝 Response (streaming):")
+
+		// For chat sessions with history, we need to capture the full response
+		// We'll use a modified approach that captures output for saving to history
+		streamingErr = makeStreamingRequestWithCapture(provider.Endpoint, provider.APIKey, req, provider.Name, &fullResponse)
+		actualProvider = providerName
+
+		if streamingErr != nil {
+			fmt.Printf("\n❌ Streaming Error: %v\n", streamingErr)
+			return
+		}
+
+		if fullResponse != "" {
+			updateSession(session.ID, "assistant", fullResponse)
+		}
+	} else {
+		// Use non-streaming mode
+		if providerConfig.FallbackEnabled {
+			response, actualProvider, err = makeRequestWithFallback(
+				provider.Endpoint, provider.APIKey, req, providerName,
+			)
+		} else {
+			response, err = makeRequest(provider.Endpoint, provider.APIKey, req, provider.Name)
+			actualProvider = providerName
+		}
+
+		if err != nil {
+			fmt.Printf("❌ Error: %v\n", err)
+			return
+		}
+
+		if response.Error != nil {
+			fmt.Printf("❌ API Error: %s\n", response.Error.Message)
+			return
+		}
+
+		if len(response.Choices) > 0 {
+			if actualProvider != providerName {
+				fmt.Printf("📡 Response from fallback provider: %s\n", actualProvider)
+			} else {
+				fmt.Printf("✅ Success with provider: %s\n", actualProvider)
+			}
+			fmt.Println(response.Choices[0].Message.Content)
+			updateSession(session.ID, "assistant", response.Choices[0].Message.Content)
+		}
 	}
 }
 
@@ -2068,39 +2112,58 @@ func chatWithAI(providerName, message string) {
 		Messages: []Message{
 			{Role: "user", Content: finalMessage},
 		},
-		Stream: false,
+		Stream: streamingEnabled,
 	}
 
 	var response *Response
 	var actualProvider string
 	var err error
+	var streamingErr error
 
-	if providerConfig.FallbackEnabled {
-		fmt.Printf("🎯 Primary provider: %s\n", providerName)
-		fmt.Printf("🔄 Fallback enabled: %v\n", providerConfig.FallbackEnabled)
-		response, actualProvider, err = makeRequestWithFallback(
-			provider.Endpoint, provider.APIKey, req, providerName,
-		)
-	} else {
-		response, err = makeRequest(provider.Endpoint, provider.APIKey, req, provider.Name)
-		actualProvider = providerName
-	}
-
-	if err != nil {
-		fmt.Printf("❌ Error: %v\n", err)
-		return
-	}
-
-	if response.Error != nil {
-		fmt.Printf("❌ API Error: %s\n", response.Error.Message)
-		return
-	}
-
-	if len(response.Choices) > 0 {
-		if actualProvider != providerName {
-			fmt.Printf("📡 Response from fallback provider: %s\n", actualProvider)
+	if streamingEnabled {
+		// Use streaming mode
+		fmt.Printf("🎯 Provider: %s\n", providerName)
+		if providerConfig.FallbackEnabled {
+			fmt.Printf("🔄 Fallback enabled: %v\n", providerConfig.FallbackEnabled)
 		}
-		fmt.Println(response.Choices[0].Message.Content)
+		fmt.Println("📝 Response (streaming):")
+
+		streamingErr = makeStreamingRequest(provider.Endpoint, provider.APIKey, req, provider.Name)
+		actualProvider = providerName
+
+		if streamingErr != nil {
+			fmt.Printf("\n❌ Streaming Error: %v\n", streamingErr)
+			return
+		}
+	} else {
+		// Use non-streaming mode
+		if providerConfig.FallbackEnabled {
+			fmt.Printf("🎯 Primary provider: %s\n", providerName)
+			fmt.Printf("🔄 Fallback enabled: %v\n", providerConfig.FallbackEnabled)
+			response, actualProvider, err = makeRequestWithFallback(
+				provider.Endpoint, provider.APIKey, req, providerName,
+			)
+		} else {
+			response, err = makeRequest(provider.Endpoint, provider.APIKey, req, provider.Name)
+			actualProvider = providerName
+		}
+
+		if err != nil {
+			fmt.Printf("❌ Error: %v\n", err)
+			return
+		}
+
+		if response.Error != nil {
+			fmt.Printf("❌ API Error: %s\n", response.Error.Message)
+			return
+		}
+
+		if len(response.Choices) > 0 {
+			if actualProvider != providerName {
+				fmt.Printf("📡 Response from fallback provider: %s\n", actualProvider)
+			}
+			fmt.Println(response.Choices[0].Message.Content)
+		}
 	}
 
 	fmt.Print("\nContinue? (y/n): ")
@@ -2293,6 +2356,237 @@ func makeRequest(endpoint, apiKey string, req Request, provider string) (*Respon
 	json.Unmarshal(body, &response)
 
 	return &response, nil
+}
+
+func makeStreamingRequest(endpoint, apiKey string, req Request, provider string) error {
+	var reqBody []byte
+	var err error
+
+	// Check if OpenRouter with BYOK enabled
+	if provider == "openrouter" {
+		if config, exists := providerConfig.Providers["openrouter"]; exists && config.BYOKConfig != nil && config.BYOKConfig.Enabled {
+			// Build OpenRouter request with BYOK provider ordering
+			openRouterReq := OpenRouterRequest{
+				Model:    req.Model,
+				Messages: req.Messages,
+				Stream:   true,
+				Provider: &OpenRouterProvider{
+					AllowFallbacks: config.BYOKConfig.AllowFallbackToShared,
+					Order:          config.BYOKConfig.ProviderOrder,
+				},
+			}
+			reqBody, err = json.Marshal(openRouterReq)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("🔄 Using OpenRouter BYOK with order: %v\n", config.BYOKConfig.ProviderOrder)
+		} else {
+			// Regular OpenRouter request without BYOK
+			reqBody, err = json.Marshal(req)
+			if err != nil {
+				return err
+			}
+		}
+	} else {
+		// Non-OpenRouter providers
+		reqBody, err = json.Marshal(req)
+		if err != nil {
+			return err
+		}
+	}
+
+	client := &http.Client{Timeout: 120 * time.Second}
+
+	httpReq, err := http.NewRequest("POST", endpoint, strings.NewReader(string(reqBody)))
+	if err != nil {
+		return err
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if provider == "openrouter" {
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+		httpReq.Header.Set("HTTP-Referer", "https://terminal-ai.local")
+		httpReq.Header.Set("X-Title", "Terminal AI CLI")
+	} else if provider == "gemini" {
+		httpReq.Header.Set("x-goog-api-key", apiKey)
+	} else {
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	reader := bufio.NewReader(resp.Body)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		// Check for SSE data prefix
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		data := strings.TrimPrefix(line, "data: ")
+
+		// Check for stream end
+		if data == "[DONE]" {
+			break
+		}
+
+		// Parse the streaming response
+		var streamResp StreamingResponse
+		if err := json.Unmarshal([]byte(data), &streamResp); err != nil {
+			// Some providers might send different formats, skip unparseable lines
+			continue
+		}
+
+		// Check for API errors in stream
+		if streamResp.Error != nil {
+			return fmt.Errorf("API Error: %s", streamResp.Error.Message)
+		}
+
+		// Extract and print content
+		if len(streamResp.Choices) > 0 {
+			content := streamResp.Choices[0].Delta.Content
+			if content != "" {
+				fmt.Print(content)
+			}
+		}
+	}
+
+	fmt.Println() // Add newline at the end
+	return nil
+}
+
+func makeStreamingRequestWithCapture(endpoint, apiKey string, req Request, provider string, capture *string) error {
+	var reqBody []byte
+	var err error
+
+	// Check if OpenRouter with BYOK enabled
+	if provider == "openrouter" {
+		if config, exists := providerConfig.Providers["openrouter"]; exists && config.BYOKConfig != nil && config.BYOKConfig.Enabled {
+			// Build OpenRouter request with BYOK provider ordering
+			openRouterReq := OpenRouterRequest{
+				Model:    req.Model,
+				Messages: req.Messages,
+				Stream:   true,
+				Provider: &OpenRouterProvider{
+					AllowFallbacks: config.BYOKConfig.AllowFallbackToShared,
+					Order:          config.BYOKConfig.ProviderOrder,
+				},
+			}
+			reqBody, err = json.Marshal(openRouterReq)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("🔄 Using OpenRouter BYOK with order: %v\n", config.BYOKConfig.ProviderOrder)
+		} else {
+			// Regular OpenRouter request without BYOK
+			reqBody, err = json.Marshal(req)
+			if err != nil {
+				return err
+			}
+		}
+	} else {
+		// Non-OpenRouter providers
+		reqBody, err = json.Marshal(req)
+		if err != nil {
+			return err
+		}
+	}
+
+	client := &http.Client{Timeout: 120 * time.Second}
+
+	httpReq, err := http.NewRequest("POST", endpoint, strings.NewReader(string(reqBody)))
+	if err != nil {
+		return err
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if provider == "openrouter" {
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+		httpReq.Header.Set("HTTP-Referer", "https://terminal-ai.local")
+		httpReq.Header.Set("X-Title", "Terminal AI CLI")
+	} else if provider == "gemini" {
+		httpReq.Header.Set("x-goog-api-key", apiKey)
+	} else {
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	var capturedContent strings.Builder
+	reader := bufio.NewReader(resp.Body)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		// Check for SSE data prefix
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		data := strings.TrimPrefix(line, "data: ")
+
+		// Check for stream end
+		if data == "[DONE]" {
+			break
+		}
+
+		// Parse the streaming response
+		var streamResp StreamingResponse
+		if err := json.Unmarshal([]byte(data), &streamResp); err != nil {
+			// Some providers might send different formats, skip unparseable lines
+			continue
+		}
+
+		// Check for API errors in stream
+		if streamResp.Error != nil {
+			return fmt.Errorf("API Error: %s", streamResp.Error.Message)
+		}
+
+		// Extract and print content
+		if len(streamResp.Choices) > 0 {
+			content := streamResp.Choices[0].Delta.Content
+			if content != "" {
+				fmt.Print(content)
+				capturedContent.WriteString(content)
+			}
+		}
+	}
+
+	*capture = capturedContent.String()
+	fmt.Println() // Add newline at the end
+	return nil
 }
 
 func showHelp() {

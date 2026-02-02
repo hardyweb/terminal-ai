@@ -886,11 +886,31 @@
         function formatContent(content) {
             return content
                 .replace(/\n/g, '<br>')
+                .replace(/##\s+/g, '<br><br><h2 class="text-xl font-bold text-emerald-300 mt-4 mb-2">')
                 .replace(/\*\*(.*?)\*\*/g, '<strong class="text-emerald-300">$1</strong>')
                 .replace(/`([^`]+)`/g, '<code class="bg-slate-800 px-2 py-1 rounded text-sm text-emerald-400">$1</code>')
                 .replace(/```([\s\S]*?)```/g, '<pre class="bg-slate-800 p-3 rounded-lg mt-2 mb-2 overflow-x-auto text-sm"><code>$1</code></pre>');
         }
         
+        function createStreamingMessage() {
+            const messagesDiv = document.getElementById('chatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message-bubble assistant message-animate';
+            messageDiv.id = 'streamingMessage';
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'streaming-content';
+            contentDiv.innerHTML = '';
+            messageDiv.appendChild(contentDiv);
+            
+            messagesDiv.appendChild(messageDiv);
+            setTimeout(() => {
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            }, 50);
+            
+            return contentDiv;
+        }
+
         async function sendMessage() {
             if (isLoading) return;
             
@@ -913,64 +933,86 @@
             showTypingIndicator();
 
             try {
-                let response;
-                let data;
+                const response = await fetch('/api/chat/stream', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({ 
+                        message, 
+                        provider,
+                        session_id: currentSessionId 
+                    })
+                });
 
-                if (currentSessionId) {
-                    response = await fetch(`/api/history/${currentSessionId}`, {
-                        method: 'PUT',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': 'Bearer ' + token
-                        },
-                        body: JSON.stringify({ message, provider })
-                    });
-
-                    const text = await response.text();
-                    console.log('Update session response:', text);
-                    try {
-                        data = JSON.parse(text);
-                    } catch (e) {
-                        console.error('Failed to parse response:', e, 'Response text:', text);
-                        showError('Invalid response from server: ' + (text.substring(0, 100) || 'Empty response'));
-                        return;
-                    }
-                } else {
-                    response = await fetch('/api/history', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': 'Bearer ' + token
-                        },
-                        body: JSON.stringify({ message, provider })
-                    });
-
-                    const text = await response.text();
-                    console.log('Create session response:', text);
-                    try {
-                        data = JSON.parse(text);
-                    } catch (e) {
-                        console.error('Failed to parse response:', e, 'Response text:', text);
-                        showError('Invalid response from server: ' + (text.substring(0, 100) || 'Empty response'));
-                        return;
-                    }
-
-                    if (data.session_id) {
-                        currentSessionId = data.session_id;
-                    }
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${errorText}`);
                 }
 
                 hideTypingIndicator();
+                
+                const contentElement = createStreamingMessage();
+                let fullResponse = '';
+                
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
 
-                if (data.response) {
-                    addMessage('assistant', data.response);
-                    chatHistory.push({ role: 'assistant', content: data.response });
-                    loadChatHistory();
-                } else {
-                    addMessage('assistant', '❌ ' + (data.error || 'Failed to get response'));
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = line.slice(6);
+                            
+                            if (data === '[DONE]') {
+                                break;
+                            }
+                            
+                            try {
+                                const json = JSON.parse(data);
+                                
+                                if (json.session_id && !currentSessionId) {
+                                    currentSessionId = json.session_id;
+                                }
+                                
+                                if (json.content) {
+                                    fullResponse += json.content;
+                                    contentElement.innerHTML = formatContent(fullResponse);
+                                    const messagesDiv = document.getElementById('chatMessages');
+                                    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                                }
+                                
+                                if (json.error) {
+                                    contentElement.innerHTML = '❌ ' + json.error;
+                                }
+                            } catch (e) {
+                                console.error('Failed to parse SSE data:', e, 'Data:', data);
+                            }
+                        }
+                    }
                 }
+                
+                const streamingMessage = document.getElementById('streamingMessage');
+                if (streamingMessage) {
+                    streamingMessage.removeAttribute('id');
+                }
+                
+                if (fullResponse) {
+                    chatHistory.push({ role: 'assistant', content: fullResponse });
+                    loadChatHistory();
+                }
+                
             } catch (error) {
                 hideTypingIndicator();
+                console.error('Stream error:', error);
                 addMessage('assistant', '❌ Sorry, I encountered an error. Please try again.');
             }
             
