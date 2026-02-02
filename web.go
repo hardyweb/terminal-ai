@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -93,6 +94,10 @@ func startWebServer() {
 	router.HandleFunc("/api/providers/{name}/test", authenticate(handleTestProvider)).Methods("POST")
 	router.HandleFunc("/api/providers", authenticate(handleAddProvider)).Methods("POST")
 	router.HandleFunc("/api/providers/{name}", authenticate(handleDeleteProvider)).Methods("DELETE")
+	// OpenRouter BYOK endpoints
+	router.HandleFunc("/api/providers/openrouter/byok", authenticate(handleGetBYOKConfig)).Methods("GET")
+	router.HandleFunc("/api/providers/openrouter/byok", authenticate(handleUpdateBYOKConfig)).Methods("PUT")
+	router.HandleFunc("/api/providers/openrouter/byok/test", authenticate(handleTestBYOK)).Methods("POST")
 	router.HandleFunc("/health", handleHealth).Methods("GET")
 
 	corsMiddleware := func(next http.Handler) http.Handler {
@@ -656,6 +661,201 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+}
+
+// OpenRouter BYOK Handlers
+
+func handleGetBYOKConfig(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	openrouterConfig, exists := providerConfig.Providers["openrouter"]
+	if !exists {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"enabled":                  false,
+			"provider_order":           []string{},
+			"allow_fallback_to_shared": true,
+			"models":                   map[string]string{},
+		})
+		return
+	}
+
+	if openrouterConfig.BYOKConfig == nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"enabled":                  false,
+			"provider_order":           []string{},
+			"allow_fallback_to_shared": true,
+			"models":                   map[string]string{},
+		})
+		return
+	}
+
+	json.NewEncoder(w).Encode(openrouterConfig.BYOKConfig)
+}
+
+func handleUpdateBYOKConfig(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Enabled               bool              `json:"enabled"`
+		ProviderOrder         []string          `json:"provider_order"`
+		AllowFallbackToShared bool              `json:"allow_fallback_to_shared"`
+		Models                map[string]string `json:"models"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	openrouterConfig, exists := providerConfig.Providers["openrouter"]
+	if !exists {
+		http.Error(w, "OpenRouter provider not found", http.StatusNotFound)
+		return
+	}
+
+	openrouterConfig.BYOKConfig = &OpenRouterBYOKConfig{
+		Enabled:               req.Enabled,
+		ProviderOrder:         req.ProviderOrder,
+		AllowFallbackToShared: req.AllowFallbackToShared,
+		Models:                req.Models,
+	}
+
+	providerConfig.Providers["openrouter"] = openrouterConfig
+
+	if err := saveProviderConfig(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+}
+
+func handleTestBYOK(w http.ResponseWriter, r *http.Request) {
+	openrouterConfig, exists := providerConfig.Providers["openrouter"]
+	if !exists || openrouterConfig.BYOKConfig == nil || !openrouterConfig.BYOKConfig.Enabled {
+		http.Error(w, "BYOK not enabled", http.StatusBadRequest)
+		return
+	}
+
+	type TestResult struct {
+		Provider string `json:"provider"`
+		Success  bool   `json:"success"`
+		Message  string `json:"message"`
+	}
+
+	results := []TestResult{}
+	fallbackUsed := false
+
+	// Get OpenRouter provider
+	provider, exists := providers["openrouter"]
+	if !exists || provider.APIKey == "" {
+		http.Error(w, "OpenRouter not configured", http.StatusBadRequest)
+		return
+	}
+
+	// Get the first provider's model to test with
+	var testModel string
+	if len(openrouterConfig.BYOKConfig.ProviderOrder) > 0 {
+		firstProvider := openrouterConfig.BYOKConfig.ProviderOrder[0]
+		modelKey := normalizeProviderKey(firstProvider)
+		testModel = openrouterConfig.BYOKConfig.Models[modelKey]
+	}
+
+	// Fallback to default model if no BYOK model configured
+	if testModel == "" {
+		testModel = provider.Model
+	}
+
+	// Test with a simple request
+	req := Request{
+		Model: testModel,
+		Messages: []Message{
+			{Role: "user", Content: "Hello! Say 'BYOK test successful' if you receive this."},
+		},
+		Stream: false,
+	}
+
+	// Build OpenRouter request with BYOK
+	openRouterReq := OpenRouterRequest{
+		Model:    req.Model,
+		Messages: req.Messages,
+		Stream:   req.Stream,
+		Provider: &OpenRouterProvider{
+			AllowFallbacks: openrouterConfig.BYOKConfig.AllowFallbackToShared,
+			Order:          openrouterConfig.BYOKConfig.ProviderOrder,
+		},
+	}
+
+	reqBody, _ := json.Marshal(openRouterReq)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	httpReq, _ := http.NewRequest("POST", provider.Endpoint, strings.NewReader(string(reqBody)))
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+provider.APIKey)
+	httpReq.Header.Set("HTTP-Referer", "https://terminal-ai.local")
+	httpReq.Header.Set("X-Title", "Terminal AI CLI")
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		results = append(results, TestResult{
+			Provider: "OpenRouter",
+			Success:  false,
+			Message:  err.Error(),
+		})
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"results":       results,
+			"fallback_used": false,
+		})
+		return
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	var response Response
+	json.Unmarshal(body, &response)
+
+	if response.Error != nil {
+		results = append(results, TestResult{
+			Provider: "OpenRouter",
+			Success:  false,
+			Message:  response.Error.Message,
+		})
+	} else if len(response.Choices) > 0 {
+		// Check if fallback was used based on response
+		fallbackUsed = strings.Contains(response.Choices[0].Message.Content, "OpenRouter") ||
+			!strings.Contains(response.Choices[0].Message.Content, "BYOK")
+
+		for _, byokProvider := range openrouterConfig.BYOKConfig.ProviderOrder {
+			results = append(results, TestResult{
+				Provider: byokProvider,
+				Success:  true,
+				Message:  "BYOK configured and responding",
+			})
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"results":       results,
+		"fallback_used": fallbackUsed,
+	})
+}
+
+// normalizeProviderKey converts provider name to a safe key for map storage
+func normalizeProviderKey(name string) string {
+	// Convert to lowercase and replace spaces/special chars with underscores
+	key := strings.ToLower(name)
+	key = strings.ReplaceAll(key, " ", "_")
+	key = strings.ReplaceAll(key, "-", "_")
+	// Remove any remaining non-alphanumeric characters
+	var result strings.Builder
+	for _, r := range key {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
 }
 
 func handlePublicRAGSearch(w http.ResponseWriter, r *http.Request) {

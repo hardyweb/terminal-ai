@@ -25,15 +25,23 @@ type AIProvider struct {
 }
 
 type AIProviderConfig struct {
-	Priority    int    `json:"priority"`
-	Enabled     bool   `json:"enabled"`
-	MaxRetries  int    `json:"max_retries"`
-	GopassKey   string `json:"gopass_key"`
-	EnvKey      string `json:"env_key"`
-	EndpointKey string `json:"endpoint_key"`
-	ModelKey    string `json:"model_key"`
-	BYOK        bool   `json:"byok"`
-	Description string `json:"description"`
+	Priority    int                   `json:"priority"`
+	Enabled     bool                  `json:"enabled"`
+	MaxRetries  int                   `json:"max_retries"`
+	GopassKey   string                `json:"gopass_key"`
+	EnvKey      string                `json:"env_key"`
+	EndpointKey string                `json:"endpoint_key"`
+	ModelKey    string                `json:"model_key"`
+	BYOK        bool                  `json:"byok"`
+	Description string                `json:"description"`
+	BYOKConfig  *OpenRouterBYOKConfig `json:"byok_config,omitempty"`
+}
+
+type OpenRouterBYOKConfig struct {
+	Enabled               bool              `json:"enabled"`
+	ProviderOrder         []string          `json:"provider_order"`
+	AllowFallbackToShared bool              `json:"allow_fallback_to_shared"`
+	Models                map[string]string `json:"models"`
 }
 
 type ProviderGlobalConfig struct {
@@ -54,6 +62,18 @@ type Request struct {
 	Model    string    `json:"model"`
 	Messages []Message `json:"messages"`
 	Stream   bool      `json:"stream,omitempty"`
+}
+
+type OpenRouterProvider struct {
+	AllowFallbacks bool     `json:"allow_fallbacks"`
+	Order          []string `json:"order"`
+}
+
+type OpenRouterRequest struct {
+	Model    string              `json:"model"`
+	Messages []Message           `json:"messages"`
+	Stream   bool                `json:"stream,omitempty"`
+	Provider *OpenRouterProvider `json:"provider,omitempty"`
 }
 
 type Message struct {
@@ -187,6 +207,18 @@ func createDefaultProviderConfig(path string) error {
 				EnvKey:      "OPENROUTER_API_KEY",
 				EndpointKey: "OPENROUTER_ENDPOINT",
 				ModelKey:    "OPENROUTER_MODEL",
+				// BYOK Configuration (disabled by default)
+				// To enable BYOK, uncomment and configure:
+				// BYOKConfig: &OpenRouterBYOKConfig{
+				// 	Enabled:               true,
+				// 	ProviderOrder:         []string{"Cerebras", "Google AI Studio", "Groq"},
+				// 	AllowFallbackToShared: true,
+				// 	Models: map[string]string{
+				// 		"cerebras": "cerebras/llama-3.1-8b",
+				// 		"google":   "google/gemini-2.0-flash-exp:free",
+				// 		"groq":     "groq/llama-3.3-70b-versatile",
+				// 	},
+				// },
 			},
 			"gemini": {
 				Priority:    2,
@@ -891,6 +923,8 @@ func handleProviderCommand() {
 			os.Exit(1)
 		}
 		setDefaultProvider(os.Args[3])
+	case "byok":
+		handleBYOKCommand()
 	default:
 		showProviderHelp()
 	}
@@ -1113,6 +1147,478 @@ func saveProviderConfig() error {
 	return os.WriteFile(configFile, data, 0644)
 }
 
+// BYOK CLI Commands
+
+func handleBYOKCommand() {
+	if len(os.Args) < 3 {
+		showBYOKHelp()
+		os.Exit(1)
+	}
+
+	subCmd := os.Args[2]
+
+	switch subCmd {
+	case "enable":
+		toggleBYOKMode(true)
+	case "disable":
+		toggleBYOKMode(false)
+	case "add":
+		if len(os.Args) < 5 {
+			fmt.Println("Usage: terminal-ai provider byok add <provider-name> <model-slug>")
+			fmt.Println("Example: terminal-ai provider byok add SambaNova sambanova/llama-3.2")
+			os.Exit(1)
+		}
+		addBYOKProviderCLI(os.Args[3], os.Args[4])
+	case "remove":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: terminal-ai provider byok remove <provider-name>")
+			fmt.Println("Example: terminal-ai provider byok remove SambaNova")
+			os.Exit(1)
+		}
+		removeBYOKProviderCLI(os.Args[3])
+	case "list":
+		listBYOKProviders()
+	case "order":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: terminal-ai provider byok order <provider1,provider2,provider3,...>")
+			fmt.Println("Example: terminal-ai provider byok order Cerebras,SambaNova,Groq")
+			os.Exit(1)
+		}
+		setBYOKProviderOrder(os.Args[3])
+	case "test":
+		testBYOKCLI()
+	case "model":
+		if len(os.Args) < 5 {
+			fmt.Println("Usage: terminal-ai provider byok model <provider-name> <model-slug>")
+			fmt.Println("Example: terminal-ai provider byok model Cerebras cerebras/llama-3.1-8b")
+			os.Exit(1)
+		}
+		setBYOKModel(os.Args[3], os.Args[4])
+	case "fallback":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: terminal-ai provider byok fallback <true|false>")
+			fmt.Println("Example: terminal-ai provider byok fallback true")
+			os.Exit(1)
+		}
+		toggleBYOKFallback(os.Args[3] == "true")
+	default:
+		showBYOKHelp()
+	}
+}
+
+func toggleBYOKMode(enabled bool) {
+	openrouterConfig, exists := providerConfig.Providers["openrouter"]
+	if !exists {
+		fmt.Println("❌ OpenRouter provider not found")
+		return
+	}
+
+	if openrouterConfig.BYOKConfig == nil {
+		// Initialize BYOK config with defaults
+		openrouterConfig.BYOKConfig = &OpenRouterBYOKConfig{
+			Enabled:               enabled,
+			ProviderOrder:         []string{},
+			AllowFallbackToShared: true,
+			Models:                map[string]string{},
+		}
+	} else {
+		openrouterConfig.BYOKConfig.Enabled = enabled
+	}
+
+	providerConfig.Providers["openrouter"] = openrouterConfig
+
+	if err := saveProviderConfig(); err != nil {
+		fmt.Printf("❌ Failed to %s BYOK: %v\n", map[bool]string{true: "enable", false: "disable"}[enabled], err)
+		return
+	}
+
+	if enabled {
+		fmt.Println("✅ BYOK mode enabled")
+		fmt.Println("ℹ️  Add BYOK providers using: terminal-ai provider byok add <name> <model>")
+	} else {
+		fmt.Println("✅ BYOK mode disabled")
+	}
+}
+
+func addBYOKProviderCLI(providerName, model string) {
+	openrouterConfig, exists := providerConfig.Providers["openrouter"]
+	if !exists {
+		fmt.Println("❌ OpenRouter provider not found")
+		return
+	}
+
+	if openrouterConfig.BYOKConfig == nil {
+		fmt.Println("❌ BYOK not initialized. Enable BYOK first:")
+		fmt.Println("   terminal-ai provider byok enable")
+		return
+	}
+
+	// Check if provider already exists
+	for _, existing := range openrouterConfig.BYOKConfig.ProviderOrder {
+		if existing == providerName {
+			fmt.Printf("❌ BYOK provider '%s' already exists\n", providerName)
+			return
+		}
+	}
+
+	// Add to order
+	openrouterConfig.BYOKConfig.ProviderOrder = append(
+		openrouterConfig.BYOKConfig.ProviderOrder,
+		providerName,
+	)
+
+	// Add model
+	if openrouterConfig.BYOKConfig.Models == nil {
+		openrouterConfig.BYOKConfig.Models = make(map[string]string)
+	}
+	modelKey := normalizeProviderKeyCLI(providerName)
+	openrouterConfig.BYOKConfig.Models[modelKey] = model
+
+	providerConfig.Providers["openrouter"] = openrouterConfig
+
+	if err := saveProviderConfig(); err != nil {
+		fmt.Printf("❌ Failed to add BYOK provider: %v\n", err)
+		return
+	}
+
+	fmt.Printf("✅ Added BYOK provider: %s\n", providerName)
+	fmt.Printf("   Model: %s\n", model)
+	fmt.Printf("ℹ️  Don't forget to add your API key at https://openrouter.ai/settings/integrations\n")
+}
+
+func removeBYOKProviderCLI(providerName string) {
+	openrouterConfig, exists := providerConfig.Providers["openrouter"]
+	if !exists || openrouterConfig.BYOKConfig == nil {
+		fmt.Println("❌ BYOK not configured")
+		return
+	}
+
+	// Remove from order
+	newOrder := []string{}
+	found := false
+	for _, p := range openrouterConfig.BYOKConfig.ProviderOrder {
+		if p != providerName {
+			newOrder = append(newOrder, p)
+		} else {
+			found = true
+		}
+	}
+
+	if !found {
+		fmt.Printf("❌ BYOK provider '%s' not found\n", providerName)
+		return
+	}
+
+	openrouterConfig.BYOKConfig.ProviderOrder = newOrder
+
+	// Remove model
+	modelKey := normalizeProviderKeyCLI(providerName)
+	delete(openrouterConfig.BYOKConfig.Models, modelKey)
+
+	providerConfig.Providers["openrouter"] = openrouterConfig
+
+	if err := saveProviderConfig(); err != nil {
+		fmt.Printf("❌ Failed to remove BYOK provider: %v\n", err)
+		return
+	}
+
+	fmt.Printf("✅ Removed BYOK provider: %s\n", providerName)
+}
+
+func listBYOKProviders() {
+	openrouterConfig, exists := providerConfig.Providers["openrouter"]
+	if !exists || openrouterConfig.BYOKConfig == nil {
+		fmt.Println("🔐 OpenRouter BYOK Configuration:")
+		fmt.Println("   Status: Not configured")
+		return
+	}
+
+	config := openrouterConfig.BYOKConfig
+
+	fmt.Println("🔐 OpenRouter BYOK Configuration:")
+	fmt.Println()
+
+	status := "❌ Disabled"
+	if config.Enabled {
+		status = "✅ Enabled"
+	}
+	fmt.Printf("Status: %s\n", status)
+	fmt.Printf("Fallback to Shared: %v\n", config.AllowFallbackToShared)
+	fmt.Println()
+
+	if len(config.ProviderOrder) == 0 {
+		fmt.Println("No BYOK providers configured.")
+		fmt.Println("Add providers using: terminal-ai provider byok add <name> <model>")
+	} else {
+		fmt.Println("BYOK Provider Priority Order:")
+		for i, provider := range config.ProviderOrder {
+			modelKey := normalizeProviderKeyCLI(provider)
+			model := config.Models[modelKey]
+			if model == "" {
+				model = "(not set)"
+			}
+			fmt.Printf("  %d. %s\n", i+1, provider)
+			fmt.Printf("     Model: %s\n", model)
+		}
+	}
+	fmt.Println()
+	fmt.Println("ℹ️  Available OpenRouter BYOK providers:")
+	fmt.Println("   - Cerebras (cerebras/llama-3.1-8b)")
+	fmt.Println("   - Google AI Studio (google/gemini-2.0-flash-exp:free)")
+	fmt.Println("   - Groq (groq/llama-3.3-70b-versatile)")
+	fmt.Println("   - SambaNova (sambanova/llama-3.2)")
+	fmt.Println("   - z.ai (zai/llama-3.1)")
+	fmt.Println("   - Together AI, Hyperbolic, Fireworks, etc.")
+}
+
+func setBYOKProviderOrder(orderStr string) {
+	openrouterConfig, exists := providerConfig.Providers["openrouter"]
+	if !exists || openrouterConfig.BYOKConfig == nil {
+		fmt.Println("❌ BYOK not configured. Enable BYOK first:")
+		fmt.Println("   terminal-ai provider byok enable")
+		return
+	}
+
+	// Parse order string (comma-separated)
+	newOrder := strings.Split(orderStr, ",")
+
+	// Trim spaces
+	for i := range newOrder {
+		newOrder[i] = strings.TrimSpace(newOrder[i])
+	}
+
+	// Validate all providers exist
+	for _, provider := range newOrder {
+		found := false
+		for _, existing := range openrouterConfig.BYOKConfig.ProviderOrder {
+			if existing == provider {
+				found = true
+				break
+			}
+		}
+		if !found {
+			fmt.Printf("❌ BYOK provider '%s' not found. Add it first:\n", provider)
+			fmt.Printf("   terminal-ai provider byok add %s <model>\n", provider)
+			return
+		}
+	}
+
+	openrouterConfig.BYOKConfig.ProviderOrder = newOrder
+	providerConfig.Providers["openrouter"] = openrouterConfig
+
+	if err := saveProviderConfig(); err != nil {
+		fmt.Printf("❌ Failed to update BYOK order: %v\n", err)
+		return
+	}
+
+	fmt.Println("✅ BYOK provider order updated")
+	fmt.Println("New priority order:")
+	for i, provider := range newOrder {
+		fmt.Printf("  %d. %s\n", i+1, provider)
+	}
+}
+
+func testBYOKCLI() {
+	openrouterConfig, exists := providerConfig.Providers["openrouter"]
+	if !exists || openrouterConfig.BYOKConfig == nil || !openrouterConfig.BYOKConfig.Enabled {
+		fmt.Println("❌ BYOK not enabled. Enable it first:")
+		fmt.Println("   terminal-ai provider byok enable")
+		return
+	}
+
+	if len(openrouterConfig.BYOKConfig.ProviderOrder) == 0 {
+		fmt.Println("❌ No BYOK providers configured. Add providers first:")
+		fmt.Println("   terminal-ai provider byok add <name> <model>")
+		return
+	}
+
+	provider, exists := providers["openrouter"]
+	if !exists || provider.APIKey == "" {
+		fmt.Println("❌ OpenRouter API key not configured")
+		return
+	}
+
+	fmt.Println("🧪 Testing OpenRouter BYOK configuration...")
+	fmt.Println()
+
+	// Get first provider's model
+	firstProvider := openrouterConfig.BYOKConfig.ProviderOrder[0]
+	modelKey := normalizeProviderKeyCLI(firstProvider)
+	testModel := openrouterConfig.BYOKConfig.Models[modelKey]
+	if testModel == "" {
+		testModel = provider.Model
+	}
+
+	req := Request{
+		Model: testModel,
+		Messages: []Message{
+			{Role: "user", Content: "Hello! Say 'BYOK test successful' if you receive this."},
+		},
+		Stream: false,
+	}
+
+	openRouterReq := OpenRouterRequest{
+		Model:    req.Model,
+		Messages: req.Messages,
+		Stream:   req.Stream,
+		Provider: &OpenRouterProvider{
+			AllowFallbacks: openrouterConfig.BYOKConfig.AllowFallbackToShared,
+			Order:          openrouterConfig.BYOKConfig.ProviderOrder,
+		},
+	}
+
+	reqBody, _ := json.Marshal(openRouterReq)
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	httpReq, _ := http.NewRequest("POST", provider.Endpoint, strings.NewReader(string(reqBody)))
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+provider.APIKey)
+	httpReq.Header.Set("HTTP-Referer", "https://terminal-ai.local")
+	httpReq.Header.Set("X-Title", "Terminal AI CLI")
+
+	fmt.Printf("🔄 Testing with BYOK order: %v\n", openrouterConfig.BYOKConfig.ProviderOrder)
+	fmt.Println()
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		fmt.Printf("❌ Test failed: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	var response Response
+	json.Unmarshal(body, &response)
+
+	if response.Error != nil {
+		fmt.Printf("❌ API Error: %s\n", response.Error.Message)
+		return
+	}
+
+	if len(response.Choices) > 0 {
+		fmt.Println("✅ BYOK test successful!")
+		fmt.Printf("Response: %s\n", response.Choices[0].Message.Content)
+
+		// Show which providers are configured
+		fmt.Println()
+		fmt.Println("Configured BYOK providers:")
+		for i, p := range openrouterConfig.BYOKConfig.ProviderOrder {
+			fmt.Printf("  %d. %s\n", i+1, p)
+		}
+	} else {
+		fmt.Println("❌ No response received")
+	}
+}
+
+func setBYOKModel(providerName, model string) {
+	openrouterConfig, exists := providerConfig.Providers["openrouter"]
+	if !exists || openrouterConfig.BYOKConfig == nil {
+		fmt.Println("❌ BYOK not configured")
+		return
+	}
+
+	// Check if provider exists
+	found := false
+	for _, existing := range openrouterConfig.BYOKConfig.ProviderOrder {
+		if existing == providerName {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		fmt.Printf("❌ BYOK provider '%s' not found. Add it first:\n", providerName)
+		fmt.Printf("   terminal-ai provider byok add %s <model>\n", providerName)
+		return
+	}
+
+	// Update model
+	if openrouterConfig.BYOKConfig.Models == nil {
+		openrouterConfig.BYOKConfig.Models = make(map[string]string)
+	}
+	modelKey := normalizeProviderKeyCLI(providerName)
+	openrouterConfig.BYOKConfig.Models[modelKey] = model
+
+	providerConfig.Providers["openrouter"] = openrouterConfig
+
+	if err := saveProviderConfig(); err != nil {
+		fmt.Printf("❌ Failed to update model: %v\n", err)
+		return
+	}
+
+	fmt.Printf("✅ Updated model for %s: %s\n", providerName, model)
+}
+
+func toggleBYOKFallback(enabled bool) {
+	openrouterConfig, exists := providerConfig.Providers["openrouter"]
+	if !exists || openrouterConfig.BYOKConfig == nil {
+		fmt.Println("❌ BYOK not configured")
+		return
+	}
+
+	openrouterConfig.BYOKConfig.AllowFallbackToShared = enabled
+	providerConfig.Providers["openrouter"] = openrouterConfig
+
+	if err := saveProviderConfig(); err != nil {
+		fmt.Printf("❌ Failed to update fallback setting: %v\n", err)
+		return
+	}
+
+	if enabled {
+		fmt.Println("✅ Fallback to OpenRouter shared enabled")
+	} else {
+		fmt.Println("✅ Fallback to OpenRouter shared disabled")
+		fmt.Println("⚠️  If all BYOK providers fail, requests will fail without fallback")
+	}
+}
+
+func normalizeProviderKeyCLI(name string) string {
+	// Convert to lowercase and replace spaces/special chars with underscores
+	key := strings.ToLower(name)
+	key = strings.ReplaceAll(key, " ", "_")
+	key = strings.ReplaceAll(key, "-", "_")
+	// Remove any remaining non-alphanumeric characters
+	var result strings.Builder
+	for _, r := range key {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
+}
+
+func showBYOKHelp() {
+	fmt.Println("OpenRouter BYOK (Bring Your Own Key) Commands:")
+	fmt.Println()
+	fmt.Println("  terminal-ai provider byok enable                - Enable BYOK mode")
+	fmt.Println("  terminal-ai provider byok disable               - Disable BYOK mode")
+	fmt.Println("  terminal-ai provider byok add <name> <model>    - Add a BYOK provider")
+	fmt.Println("  terminal-ai provider byok remove <name>         - Remove a BYOK provider")
+	fmt.Println("  terminal-ai provider byok list                  - List configured BYOK providers")
+	fmt.Println("  terminal-ai provider byok order <p1,p2,p3...>   - Set provider priority order")
+	fmt.Println("  terminal-ai provider byok test                  - Test BYOK configuration")
+	fmt.Println("  terminal-ai provider byok model <name> <model>  - Set model for a provider")
+	fmt.Println("  terminal-ai provider byok fallback <true|false> - Toggle fallback to shared")
+	fmt.Println()
+	fmt.Println("Examples:")
+	fmt.Println("  terminal-ai provider byok enable")
+	fmt.Println("  terminal-ai provider byok add SambaNova sambanova/llama-3.2")
+	fmt.Println("  terminal-ai provider byok add z.ai zai/llama-3.1")
+	fmt.Println("  terminal-ai provider byok order Cerebras,SambaNova,Groq")
+	fmt.Println("  terminal-ai provider byok test")
+	fmt.Println()
+	fmt.Println("Popular BYOK Providers:")
+	fmt.Println("  - Cerebras: cerebras/llama-3.1-8b")
+	fmt.Println("  - Google AI Studio: google/gemini-2.0-flash-exp:free")
+	fmt.Println("  - Groq: groq/llama-3.3-70b-versatile")
+	fmt.Println("  - SambaNova: sambanova/llama-3.2")
+	fmt.Println("  - z.ai: zai/llama-3.1")
+	fmt.Println("  - Together AI, Hyperbolic, Fireworks, etc.")
+	fmt.Println()
+	fmt.Println("Note: Add your API keys at https://openrouter.ai/settings/integrations")
+}
+
 func showProviderHelp() {
 	fmt.Println("Provider Management Commands:")
 	fmt.Println()
@@ -1124,12 +1630,21 @@ func showProviderHelp() {
 	fmt.Println("  terminal-ai provider add <provider>            - Add a new custom provider")
 	fmt.Println("  terminal-ai provider default <provider>        - Set default provider")
 	fmt.Println()
+	fmt.Println("OpenRouter BYOK Commands:")
+	fmt.Println("  terminal-ai provider byok enable               - Enable BYOK mode")
+	fmt.Println("  terminal-ai provider byok add <name> <model>   - Add a BYOK provider (SambaNova, z.ai, etc.)")
+	fmt.Println("  terminal-ai provider byok remove <name>        - Remove a BYOK provider")
+	fmt.Println("  terminal-ai provider byok list                 - List configured BYOK providers")
+	fmt.Println("  terminal-ai provider byok order <p1,p2...>     - Set provider priority order")
+	fmt.Println("  terminal-ai provider byok test                 - Test BYOK configuration")
+	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  terminal-ai provider list")
 	fmt.Println("  terminal-ai provider test openrouter")
-	fmt.Println("  terminal-ai provider enable gemini")
-	fmt.Println("  terminal-ai provider priority openrouter_custom 0")
-	fmt.Println("  terminal-ai provider add myprovider")
+	fmt.Println("  terminal-ai provider byok enable")
+	fmt.Println("  terminal-ai provider byok add SambaNova sambanova/llama-3.2")
+	fmt.Println("  terminal-ai provider byok order Cerebras,SambaNova,Groq")
+	fmt.Println("  terminal-ai provider byok test")
 }
 
 func handleChatCommand() {
@@ -1708,9 +2223,40 @@ func makeRequestWithFallback(endpoint, apiKey string, req Request, providerName 
 }
 
 func makeRequest(endpoint, apiKey string, req Request, provider string) (*Response, error) {
-	reqBody, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
+	var reqBody []byte
+	var err error
+
+	// Check if OpenRouter with BYOK enabled
+	if provider == "openrouter" {
+		if config, exists := providerConfig.Providers["openrouter"]; exists && config.BYOKConfig != nil && config.BYOKConfig.Enabled {
+			// Build OpenRouter request with BYOK provider ordering
+			openRouterReq := OpenRouterRequest{
+				Model:    req.Model,
+				Messages: req.Messages,
+				Stream:   req.Stream,
+				Provider: &OpenRouterProvider{
+					AllowFallbacks: config.BYOKConfig.AllowFallbackToShared,
+					Order:          config.BYOKConfig.ProviderOrder,
+				},
+			}
+			reqBody, err = json.Marshal(openRouterReq)
+			if err != nil {
+				return nil, err
+			}
+			fmt.Printf("🔄 Using OpenRouter BYOK with order: %v\n", config.BYOKConfig.ProviderOrder)
+		} else {
+			// Regular OpenRouter request without BYOK
+			reqBody, err = json.Marshal(req)
+			if err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		// Non-OpenRouter providers
+		reqBody, err = json.Marshal(req)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	client := &http.Client{Timeout: 120 * time.Second}

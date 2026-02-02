@@ -2,14 +2,62 @@
 
 Simple Go CLI untuk interaksi dengan pelbagai API AI seperti OpenRouter, Gemini, Groq, dan lain-lain.
 
-## Setup
+## Setup (Automatik dengan setup.sh)
 
-1. Install Go (jika belum ada)
-2. Copy `.env.example` ke `.env`:
-   ```bash
-   cp .env.example .env
-   ```
-3. Masukkan API key anda dalam `.env`
+Jika menggunakan `setup.sh`:
+1. Run setup script: `./setup.sh`
+2. Setup akan create semua folder dan file yang diperlukan
+
+## Setup Manual (Tanpa setup.sh)
+
+Jika tidak menggunakan `setup.sh`, anda perlu setup secara manual:
+
+### 1. Install Go
+Pastikan Go sudah install di sistem anda.
+
+### 2. Create Configuration Directory
+
+**WAJIB** create folder `~/.config/terminal-ai/` secara manual:
+
+```bash
+# Create config directory
+mkdir -p ~/.config/terminal-ai
+
+# Create subdirectories untuk user management (WAJIB untuk create user)
+mkdir -p ~/.config/terminal-ai/user
+```
+
+**Penting:** Folder `~/.config/terminal-ai/user` **MESTI** dibuat secara manual sebelum boleh create user dengan command `terminal-ai user create`.
+
+### 3. Setup Environment Variables
+
+Copy `.env.example` ke `~/.config/terminal-ai/.env`:
+
+```bash
+cp .env.example ~/.config/terminal-ai/.env
+```
+
+Edit file tersebut dan masukkan API key anda:
+
+```bash
+nano ~/.config/terminal-ai/.env
+```
+
+### 4. Build Binary
+
+```bash
+go mod tidy
+go build -o terminal-ai .
+```
+
+### 5. Verify Installation
+
+Test dengan command:
+
+```bash
+./terminal-ai --help
+./terminal-ai provider list
+```
 
 ## Install Dependencies
 
@@ -140,9 +188,14 @@ Contoh workflow:
 
 ## Directories
 
-- `~/.terminal-ai/skills/` - Custom skills
+- `~/.config/terminal-ai/` - Main configuration directory **(WAJIB create manual untuk setup tanpa setup.sh)**
+- `~/.config/terminal-ai/user/` - User management directory **(WAJIB create manual sebelum boleh create user)**
+- `~/.config/terminal-ai/.env` - Environment variables dan API keys
+- `~/.config/terminal-ai/providers.json` - Provider configuration
+- `~/.config/terminal-ai/skills/` - Custom skills
 - `$XDG_DATA_HOME/terminal-ai/rag-index.json` atau `$HOME/.local/share/terminal-ai/rag-index.json` - RAG index cache
-- `.env` - API keys dan configuration
+
+**Nota Penting:** Untuk setup manual tanpa `setup.sh`, anda **MESTI** create folder `~/.config/terminal-ai/user/` secara manual sebelum boleh menggunakan command `terminal-ai user create`. Jika folder ini tidak wujud, command create user akan fail.
 
 ## Environment Variables
 
@@ -187,10 +240,36 @@ GROQ_MODEL=llama-3.3-70b-versatile
 
 ## Troubleshooting
 
-Jika timeout error:
+### Jika timeout error:
 - Pastikan internet connection stabil
 - Cuba guna provider lain (gemini/groq biasanya lebih cepat)
 
-Jika API key error:
-- Check `.env` file
+### Jika API key error:
+- Check `~/.config/terminal-ai/.env` file
 - Pastikan API key betul dan ada credit
+
+### Jika tidak boleh create user (setup manual tanpa setup.sh):
+**Error:** `Failed to create user: open /home/user/.config/terminal-ai/user/users.json: no such file or directory`
+
+**Solution:** Create folder user secara manual:
+```bash
+mkdir -p ~/.config/terminal-ai/user
+```
+
+Selepas itu, barulah boleh create user:
+```bash
+./terminal-ai user create username admin
+```
+
+### Jika provider configuration tidak dijumpai:
+- Pastikan folder `~/.config/terminal-ai/` telah dibuat
+- Run `./terminal-ai provider list` untuk verify
+- Jika masih fail, create folder secara manual: `mkdir -p ~/.config/terminal-ai`
+
+### Setup Manual Checklist:
+Jika menggunakan setup manual (tanpa setup.sh), pastikan:
+- [ ] Folder `~/.config/terminal-ai/` telah dibuat
+- [ ] Folder `~/.config/terminal-ai/user/` telah dibuat (untuk user management)
+- [ ] File `~/.config/terminal-ai/.env` telah di-copy dari `.env.example`
+- [ ] API keys telah dimasukkan dalam `.env`
+- [ ] Binary telah di-build: `go build -o terminal-ai .`

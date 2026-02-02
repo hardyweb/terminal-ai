@@ -622,6 +622,75 @@
                     </button>
                 </div>
 
+                <!-- OpenRouter BYOK Settings -->
+                <div class="mb-8 p-4 bg-slate-800/50 rounded-xl border border-slate-700">
+                    <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                        <span class="text-emerald-400">🔐</span>
+                        <span>OpenRouter BYOK (Bring Your Own Key)</span>
+                    </h3>
+                    <p class="text-sm text-slate-400 mb-4">
+                        Use your own API keys with OpenRouter (Cerebras, Google AI Studio, Groq, SambaNova, z.ai, etc.). 
+                        <a href="https://openrouter.ai/settings/integrations" target="_blank" class="text-emerald-400 hover:underline">Add keys in OpenRouter →</a>
+                    </p>
+                    
+                    <!-- BYOK Enable/Disable -->
+                    <div class="mb-4 flex items-center justify-between">
+                        <label class="text-slate-300">Enable BYOK Mode</label>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" id="byokEnabled" class="sr-only peer" onchange="toggleBYOK()">
+                            <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+                        </label>
+                    </div>
+
+                    <!-- BYOK Provider Order -->
+                    <div id="byokConfig" class="space-y-4 hidden">
+                        <div>
+                            <label class="block text-sm font-medium text-slate-300 mb-2">BYOK Provider Priority Order</label>
+                            <p class="text-xs text-slate-500 mb-2">Drag to reorder. First = highest priority. Add any OpenRouter-supported BYOK provider.</p>
+                            
+                            <!-- Dynamic Provider List -->
+                            <div id="byokProviderOrder" class="space-y-2">
+                                <!-- Default providers - will be populated dynamically -->
+                            </div>
+                            
+                            <!-- Add New BYOK Provider -->
+                            <div class="mt-4 p-3 bg-slate-700/30 rounded-lg">
+                                <label class="block text-xs font-medium text-slate-400 mb-2">Add New BYOK Provider</label>
+                                <div class="flex gap-2">
+                                    <input type="text" id="newBYOKProviderName" placeholder="Provider Name (e.g., SambaNova)" class="input-field text-sm flex-1">
+                                    <input type="text" id="newBYOKProviderModel" placeholder="Model (e.g., sambanova/llama-3.2)" class="input-field text-sm flex-1">
+                                    <button onclick="addBYOKProvider()" class="btn-secondary text-sm px-4">+ Add</button>
+                                </div>
+                                <p class="text-xs text-slate-500 mt-1">
+                                    Popular: SambaNova, z.ai, Together AI, Hyperbolic, Fireworks, etc.
+                                </p>
+                            </div>
+                        </div>
+
+                        <!-- Fallback Toggle -->
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <label class="text-slate-300">Fallback to OpenRouter Shared</label>
+                                <p class="text-xs text-slate-500">Use OpenRouter's shared capacity if all BYOK providers fail</p>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="byokFallback" class="sr-only peer" checked>
+                                <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+                            </label>
+                        </div>
+
+                        <!-- Save BYOK Settings -->
+                        <button onclick="saveBYOKSettings()" class="btn-primary w-full">
+                            💾 Save BYOK Configuration
+                        </button>
+
+                        <!-- Test BYOK -->
+                        <button onclick="testBYOK()" class="btn-secondary w-full">
+                            🧪 Test BYOK Setup
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Providers List -->
                 <div>
                     <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
@@ -1148,6 +1217,7 @@
         async function openSettings() {
             document.getElementById('settingsModal').classList.remove('hidden');
             await loadProviders();
+            await loadBYOKSettings();
         }
 
         async function closeSettings() {
@@ -1364,6 +1434,281 @@
             } catch (error) {
                 alert('Failed to delete provider: ' + error.message);
             }
+        }
+
+        // OpenRouter BYOK Functions
+        let byokProviders = []; // Store BYOK providers dynamically
+
+        function toggleBYOK() {
+            const enabled = document.getElementById('byokEnabled').checked;
+            const configDiv = document.getElementById('byokConfig');
+            if (enabled) {
+                configDiv.classList.remove('hidden');
+            } else {
+                configDiv.classList.add('hidden');
+            }
+        }
+
+        function createBYOKProviderElement(providerName, model, isDefault = false) {
+            const div = document.createElement('div');
+            div.className = 'flex items-center gap-2 p-2 bg-slate-700/50 rounded-lg';
+            div.setAttribute('data-provider', providerName);
+            div.setAttribute('draggable', 'true');
+            
+            div.innerHTML = `
+                <span class="cursor-move text-slate-400">⋮⋮</span>
+                <input type="checkbox" checked class="byok-provider-checkbox rounded border-slate-600 text-emerald-500 focus:ring-emerald-500">
+                <span class="flex-1 text-slate-300">${providerName}</span>
+                <input type="text" placeholder="Model slug (e.g., provider/model-name)" 
+                       class="byok-model-input input-field text-sm py-1 px-2 w-64" 
+                       value="${model || ''}">
+                <button onclick="removeBYOKProvider('${providerName}')" class="text-red-400 hover:text-red-300 px-2" title="Remove provider">
+                    ✕
+                </button>
+            `;
+            
+            // Add drag event listeners
+            div.addEventListener('dragstart', function(e) {
+                draggedItem = e.target.closest('[data-provider]');
+                e.target.closest('[data-provider]').style.opacity = '0.5';
+            });
+
+            div.addEventListener('dragend', function(e) {
+                e.target.closest('[data-provider]').style.opacity = '1';
+                draggedItem = null;
+            });
+            
+            return div;
+        }
+
+        function renderBYOKProviders() {
+            const container = document.getElementById('byokProviderOrder');
+            container.innerHTML = '';
+            
+            byokProviders.forEach(provider => {
+                const el = createBYOKProviderElement(provider.name, provider.model, provider.isDefault);
+                container.appendChild(el);
+            });
+        }
+
+        function addBYOKProvider() {
+            const nameInput = document.getElementById('newBYOKProviderName');
+            const modelInput = document.getElementById('newBYOKProviderModel');
+            
+            const name = nameInput.value.trim();
+            const model = modelInput.value.trim();
+            
+            if (!name) {
+                alert('Please enter a provider name');
+                return;
+            }
+            
+            // Check if provider already exists
+            if (byokProviders.some(p => p.name === name)) {
+                alert(`Provider '${name}' already exists`);
+                return;
+            }
+            
+            // Add to list
+            byokProviders.push({
+                name: name,
+                model: model || '',
+                isDefault: false
+            });
+            
+            // Render updated list
+            renderBYOKProviders();
+            
+            // Clear inputs
+            nameInput.value = '';
+            modelInput.value = '';
+        }
+
+        function removeBYOKProvider(providerName) {
+            if (!confirm(`Remove '${providerName}' from BYOK list?`)) {
+                return;
+            }
+            
+            byokProviders = byokProviders.filter(p => p.name !== providerName);
+            renderBYOKProviders();
+        }
+
+        async function saveBYOKSettings() {
+            const enabled = document.getElementById('byokEnabled').checked;
+            const allowFallback = document.getElementById('byokFallback').checked;
+            
+            // Collect provider order from DOM
+            const providerItems = document.querySelectorAll('#byokProviderOrder > div');
+            const providerOrder = [];
+            const models = {};
+            
+            providerItems.forEach(item => {
+                const checkbox = item.querySelector('.byok-provider-checkbox');
+                if (checkbox.checked) {
+                    const providerName = item.getAttribute('data-provider');
+                    const modelInput = item.querySelector('.byok-model-input');
+                    providerOrder.push(providerName);
+                    // Use normalized key for model storage
+                    const modelKey = providerName.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+                    models[modelKey] = modelInput.value;
+                }
+            });
+
+            if (enabled && providerOrder.length === 0) {
+                alert('Please select at least one BYOK provider');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/providers/openrouter/byok', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({
+                        enabled,
+                        provider_order: providerOrder,
+                        allow_fallback_to_shared: allowFallback,
+                        models
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(await response.text());
+                }
+
+                alert('BYOK settings saved successfully!');
+            } catch (error) {
+                alert('Failed to save BYOK settings: ' + error.message);
+            }
+        }
+
+        async function testBYOK() {
+            try {
+                const response = await fetch('/api/providers/openrouter/byok/test', {
+                    method: 'POST',
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (!response.ok) {
+                    throw new Error(await response.text());
+                }
+
+                const data = await response.json();
+                
+                let message = '🧪 BYOK Test Results:\n\n';
+                data.results.forEach(result => {
+                    const icon = result.success ? '✅' : '❌';
+                    message += `${icon} ${result.provider}: ${result.message}\n`;
+                });
+                
+                if (data.fallback_used) {
+                    message += '\n📡 Fallback to OpenRouter shared was used';
+                }
+                
+                alert(message);
+            } catch (error) {
+                alert('BYOK test failed: ' + error.message);
+            }
+        }
+
+        async function loadBYOKSettings() {
+            try {
+                const response = await fetch('/api/providers/openrouter/byok', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+
+                if (!response.ok) {
+                    throw new Error(await response.text());
+                }
+
+                const config = await response.json();
+                
+                // Set toggle state
+                document.getElementById('byokEnabled').checked = config.enabled;
+                document.getElementById('byokFallback').checked = config.allow_fallback_to_shared !== false;
+                
+                // Show/hide config section
+                toggleBYOK();
+                
+                // Default providers if none configured
+                const defaultProviders = [
+                    { name: 'Cerebras', model: 'cerebras/llama-3.1-8b', isDefault: true },
+                    { name: 'Google AI Studio', model: 'google/gemini-2.0-flash-exp:free', isDefault: true },
+                    { name: 'Groq', model: 'groq/llama-3.3-70b-versatile', isDefault: true }
+                ];
+                
+                // Load providers from config or use defaults
+                if (config.provider_order && config.provider_order.length > 0) {
+                    byokProviders = config.provider_order.map(providerName => {
+                        const modelKey = providerName.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+                        const defaultProvider = defaultProviders.find(p => p.name === providerName);
+                        return {
+                            name: providerName,
+                            model: config.models[modelKey] || (defaultProvider ? defaultProvider.model : ''),
+                            isDefault: defaultProviders.some(p => p.name === providerName)
+                        };
+                    });
+                    
+                    // Add any default providers not in the saved order
+                    defaultProviders.forEach(defaultP => {
+                        if (!byokProviders.some(p => p.name === defaultP.name)) {
+                            byokProviders.push({ ...defaultP });
+                        }
+                    });
+                } else {
+                    // Use default providers
+                    byokProviders = [...defaultProviders];
+                }
+                
+                // Render providers
+                renderBYOKProviders();
+                
+            } catch (error) {
+                console.error('Failed to load BYOK settings:', error);
+                // Use defaults on error
+                byokProviders = [
+                    { name: 'Cerebras', model: 'cerebras/llama-3.1-8b', isDefault: true },
+                    { name: 'Google AI Studio', model: 'google/gemini-2.0-flash-exp:free', isDefault: true },
+                    { name: 'Groq', model: 'groq/llama-3.3-70b-versatile', isDefault: true }
+                ];
+                renderBYOKProviders();
+            }
+        }
+
+        // Simple drag and drop for BYOK provider order
+        let draggedItem = null;
+
+        document.addEventListener('DOMContentLoaded', function() {
+            const container = document.getElementById('byokProviderOrder');
+            if (container) {
+                container.addEventListener('dragover', function(e) {
+                    e.preventDefault();
+                    const afterElement = getDragAfterElement(container, e.clientY);
+                    if (draggedItem) {
+                        if (afterElement == null) {
+                            container.appendChild(draggedItem);
+                        } else {
+                            container.insertBefore(draggedItem, afterElement);
+                        }
+                    }
+                });
+            }
+        });
+
+        function getDragAfterElement(container, y) {
+            const draggableElements = [...container.querySelectorAll('[data-provider]:not([style*="opacity: 0.5"])')];
+            
+            return draggableElements.reduce((closest, child) => {
+                const box = child.getBoundingClientRect();
+                const offset = y - box.top - box.height / 2;
+                if (offset < 0 && offset > closest.offset) {
+                    return { offset: offset, element: child };
+                } else {
+                    return closest;
+                }
+            }, { offset: Number.NEGATIVE_INFINITY }).element;
         }
     </script>
 </body>
