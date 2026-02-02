@@ -428,9 +428,18 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	// Stream response
+	// Stream response with heartbeat for long streams
 	reader := bufio.NewReader(resp.Body)
+	lastHeartbeat := time.Now()
+
 	for {
+		// Check if we should send a heartbeat (every 30 seconds)
+		if time.Since(lastHeartbeat) > 30*time.Second {
+			fmt.Fprintf(w, ": heartbeat\n\n")
+			flusher.Flush()
+			lastHeartbeat = time.Now()
+		}
+
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if err == io.EOF {

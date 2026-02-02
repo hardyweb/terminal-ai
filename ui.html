@@ -884,12 +884,93 @@
         }
         
         function formatContent(content) {
-            return content
-                .replace(/\n/g, '<br>')
-                .replace(/##\s+/g, '<br><br><h2 class="text-xl font-bold text-emerald-300 mt-4 mb-2">')
-                .replace(/\*\*(.*?)\*\*/g, '<strong class="text-emerald-300">$1</strong>')
-                .replace(/`([^`]+)`/g, '<code class="bg-slate-800 px-2 py-1 rounded text-sm text-emerald-400">$1</code>')
-                .replace(/```([\s\S]*?)```/g, '<pre class="bg-slate-800 p-3 rounded-lg mt-2 mb-2 overflow-x-auto text-sm"><code>$1</code></pre>');
+            let formatted = content;
+            
+            // 0. PRE-PROCESS: Add newlines before problematic patterns
+            // Add newline before ## headers even if inline (e.g., "Apa Itu?## Quantum")
+            formatted = formatted.replace(/([a-z0-9)\]])(##\s+)/gi, '$1\n\n$2');
+            
+            // Add newline before list items even if inline (e.g., "):- ")
+            formatted = formatted.replace(/([):])(\s*)([-•*]\s+)/g, '$1\n\n$3');
+            
+            // Add newline after headers that are followed by text without newline
+            formatted = formatted.replace(/(<\/h[23]>)(\S)/gi, '$1\n\n$2');
+            
+            // Add newline between sentences that start with - or • 
+            formatted = formatted.replace(/([.!?])\s*([-•*])\s+/g, '$1\n\n$2 ');
+            
+            // Add newline before numbered lists that are inline
+            formatted = formatted.replace(/([a-z0-9)])(\s*)(\d+\.\s+)/gi, '$1\n\n$3');
+            
+            // 1. Handle ## headers FIRST
+            // Remove **bold** from header text to keep it simple
+            formatted = formatted.replace(/^##\s+(.+?)(\n|$)/gm, function(match, header) {
+                // Strip **bold** from header content
+                header = header.replace(/\*\*(.*?)\*\*/g, '$1');
+                return `<h2 class="text-xl font-bold text-emerald-300 mt-6 mb-3 border-b border-emerald-500/30 pb-2">${header}</h2>`;
+            });
+            
+            // Also handle inline ## headers
+            formatted = formatted.replace(/##\s+([^#\n]+)/g, function(match, header) {
+                // Strip **bold** from header content
+                header = header.replace(/\*\*(.*?)\*\*/g, '$1');
+                return `<h2 class="text-xl font-bold text-emerald-300 mt-6 mb-3 border-b border-emerald-500/30 pb-2">${header.trim()}</h2>`;
+            });
+            
+            // 2. Handle ### headers
+            formatted = formatted.replace(/^###\s+(.+?)(\n|$)/gm, function(match, header) {
+                // Strip **bold** from header content
+                header = header.replace(/\*\*(.*?)\*\*/g, '$1');
+                return `<h3 class="text-lg font-semibold text-emerald-300 mt-4 mb-2">${header}</h3>`;
+            });
+            
+            // Also handle inline ### headers
+            formatted = formatted.replace(/###\s+([^#\n]+)/g, function(match, header) {
+                // Strip **bold** from header content
+                header = header.replace(/\*\*(.*?)\*\*/g, '$1');
+                return `<h3 class="text-lg font-semibold text-emerald-300 mt-4 mb-2">${header.trim()}</h3>`;
+            });
+            
+            // 3. Handle **bold** text (only outside of headers now)
+            formatted = formatted.replace(/\*\*(.*?)\*\*/g, '<strong class="text-emerald-300 font-semibold">$1</strong>');
+            
+            // 4. Handle inline code
+            formatted = formatted.replace(/`([^`]+)`/g, '<code class="bg-slate-800 px-2 py-1 rounded text-sm text-emerald-400 font-mono">$1</code>');
+            
+            // 5. Handle code blocks
+            formatted = formatted.replace(/```([\s\S]*?)```/g, '<pre class="bg-slate-800 p-4 rounded-lg mt-3 mb-3 overflow-x-auto text-sm"><code class="text-emerald-300 font-mono">$1</code></pre>');
+            
+            // 6. Handle bullet points with better spacing
+            formatted = formatted.replace(/^\s*[-•]\s+/gm, '<span class="text-emerald-400">•</span> ');
+            // Also handle inline bullets with preceding text
+            formatted = formatted.replace(/([-•])\s+/g, '<span class="text-emerald-400">•</span> ');
+            
+            // 7. Handle numbered lists
+            formatted = formatted.replace(/^\s*(\d+)\.\s+/gm, '<span class="text-emerald-400">$1.</span> ');
+            
+            // 8. Handle horizontal rules
+            formatted = formatted.replace(/^[-*_]{3,}$/gm, '<hr class="border-emerald-500/30 my-4">');
+            
+            // 9. Handle blockquotes
+            formatted = formatted.replace(/^>\s+(.+)$/gm, '<blockquote class="border-l-4 border-emerald-500/50 pl-4 italic text-slate-300 my-2">$1</blockquote>');
+            
+            // 10. Convert newlines to paragraph breaks
+            // First, normalize multiple newlines
+            formatted = formatted.replace(/\n{3,}/g, '\n\n');
+            // Split by double newlines and wrap in paragraphs
+            const paragraphs = formatted.split('\n\n');
+            const formattedParagraphs = paragraphs.map(p => {
+                p = p.trim();
+                if (!p) return '';
+                if (p.startsWith('<h') || p.startsWith('<pre') || p.startsWith('<block') || p.startsWith('<hr')) {
+                    return p;
+                }
+                return `<p class="mb-3 text-slate-200 leading-relaxed">${p}</p>`;
+            });
+            
+            formatted = formattedParagraphs.filter(p => p).join('\n');
+            
+            return formatted;
         }
         
         function createStreamingMessage() {
@@ -955,11 +1036,231 @@
                 
                 const contentElement = createStreamingMessage();
                 let fullResponse = '';
+                let streamComplete = false;
+                let timeoutCount = 0;
+                const MAX_TIMEOUT_RETRIES = 2;
                 
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 let buffer = '';
 
+                // Generate a unique stream ID for this request
+                const streamId = 'stream_' + Date.now();
+                localStorage.setItem('lastStreamId', streamId);
+                localStorage.setItem('lastStreamMessage', message);
+                localStorage.setItem('lastStreamProvider', provider);
+
+                while (true) {
+                    try {
+                        const { done, value } = await reader.read();
+                        if (done) {
+                            streamComplete = true;
+                            break;
+                        }
+                        
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop();
+                        
+                        for (const line of lines) {
+                            if (line.startsWith('data: ')) {
+                                const data = line.slice(6);
+                                
+                                if (data === '[DONE]') {
+                                    streamComplete = true;
+                                    break;
+                                }
+                                
+                                // Skip heartbeat lines
+                                if (data.startsWith(':')) {
+                                    continue;
+                                }
+                                
+                                try {
+                                    const json = JSON.parse(data);
+                                    
+                                    if (json.session_id && !currentSessionId) {
+                                        currentSessionId = json.session_id;
+                                    }
+                                    
+                                    if (json.content) {
+                                        fullResponse += json.content;
+                                        
+                                        // Save progress to localStorage (for resume capability)
+                                        try {
+                                            localStorage.setItem('streamProgress_' + streamId, fullResponse);
+                                            localStorage.setItem('streamTimestamp_' + streamId, Date.now().toString());
+                                        } catch (e) {
+                                            // localStorage might be full, ignore
+                                        }
+                                        
+                                        // Append raw content
+                                        const tempDiv = document.createElement('div');
+                                        tempDiv.textContent = json.content;
+                                        contentElement.innerHTML += tempDiv.innerHTML;
+                                        
+                                        // Auto-scroll to bottom
+                                        const messagesDiv = document.getElementById('chatMessages');
+                                        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                                    }
+                                    
+                                    if (json.error) {
+                                        contentElement.innerHTML = '❌ ' + json.error;
+                                    }
+                                } catch (e) {
+                                    console.error('Failed to parse SSE data:', e, 'Data:', data);
+                                }
+                            }
+                        }
+                        
+                        if (streamComplete) break;
+                        
+                    } catch (readError) {
+                        timeoutCount++;
+                        console.warn('Stream timeout/retry:', timeoutCount, readError.message);
+                        
+                        if (timeoutCount >= MAX_TIMEOUT_RETRIES || !readError.message.includes('timeout')) {
+                            // Give up after max retries or non-timeout error
+                            break;
+                        }
+                        
+                        // Wait a bit before retrying
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                    }
+                }
+                
+                // Clear stream progress from localStorage
+                try {
+                    localStorage.removeItem('streamProgress_' + streamId);
+                    localStorage.removeItem('streamTimestamp_' + streamId);
+                } catch (e) {}
+                
+                // Stream complete or timed out
+                if (streamComplete && fullResponse) {
+                    // Full success - apply formatting
+                    contentElement.innerHTML = formatContent(fullResponse);
+                    chatHistory.push({ role: 'assistant', content: fullResponse });
+                    loadChatHistory();
+                } else if (fullResponse) {
+                    // Timed out - show partial with continue option
+                    contentElement.innerHTML = formatContent(fullResponse);
+                    
+                    // Add "Continue" button for timed out streams
+                    const continueDiv = document.createElement('div');
+                    continueDiv.className = 'mt-4 p-3 bg-slate-800/80 rounded-lg border border-amber-500/50';
+                    continueDiv.innerHTML = `
+                        <p class="text-amber-400 text-sm mb-2">⚠️ Stream timed out (${timeoutCount} retries)</p>
+                        <p class="text-slate-400 text-xs mb-3">Response incomplete. Continue from here?</p>
+                        <button onclick="continueStreaming('${streamId}', ${currentSessionId ? "'" + currentSessionId + "'" : 'null'})" 
+                                class="btn-primary w-full text-sm py-2">
+                            ▶️ Continue Response
+                        </button>
+                    `;
+                    contentElement.parentNode.appendChild(continueDiv);
+                    
+                    // Save partial response
+                    chatHistory.push({ role: 'assistant', content: fullResponse + '\n\n[Response incomplete - continued...]' });
+                }
+                
+                const streamingMessage = document.getElementById('streamingMessage');
+                if (streamingMessage) {
+                    streamingMessage.removeAttribute('id');
+                }
+                
+            } catch (error) {
+                hideTypingIndicator();
+                console.error('Stream error:', error);
+                
+                // Check if there's a partial response to continue
+                const lastStreamId = localStorage.getItem('lastStreamId');
+                if (lastStreamId) {
+                    const savedProgress = localStorage.getItem('streamProgress_' + lastStreamId);
+                    if (savedProgress && savedProgress.length > 50) {
+                        // Offer to continue from saved progress
+                        const continueDiv = document.createElement('div');
+                        continueDiv.className = 'mt-4 p-3 bg-slate-800/80 rounded-lg border border-amber-500/50';
+                        continueDiv.innerHTML = `
+                            <p class="text-amber-400 text-sm mb-2">⚠️ Connection lost</p>
+                            <p class="text-slate-400 text-xs mb-3">Continue from saved progress?</p>
+                            <button onclick="continueFromLastStream()" class="btn-primary w-full text-sm py-2">
+                                ▶️ Continue from Saved
+                            </button>
+                        `;
+                        addMessage('assistant', continueDiv.innerHTML);
+                    }
+                } else {
+                    addMessage('assistant', '❌ Sorry, I encountered an error. Please try again.');
+                }
+            }
+            
+            isLoading = false;
+            input.disabled = false;
+            sendBtn.disabled = false;
+            sendBtn.innerHTML = '<span id="sendIcon">📤</span><span class="hidden sm:inline">Send</span>';
+            input.focus();
+        }
+        
+        async function continueStreaming(streamId, sessionId) {
+            const savedProgress = localStorage.getItem('streamProgress_' + streamId);
+            if (!savedProgress) {
+                alert('No saved progress found');
+                return;
+            }
+            
+            const lastMessage = localStorage.getItem('lastStreamMessage');
+            const lastProvider = localStorage.getItem('lastStreamProvider') || 'openrouter';
+            
+            if (!lastMessage) {
+                alert('No message found to continue');
+                return;
+            }
+            
+            // Create a continuation message
+            const continueMessage = `[CONTINUE FROM SAVED PROGRESS]\n\nPrevious response was incomplete. Please continue from where we left off:\n\n${savedProgress}`;
+            
+            // Clear the continue button
+            const messages = document.querySelectorAll('.message-bubble');
+            const lastMessageEl = messages[messages.length - 1];
+            const continueBtn = lastMessageEl.querySelector('button');
+            if (continueBtn) {
+                continueBtn.parentNode.remove();
+            }
+            
+            // Show typing indicator
+            showTypingIndicator();
+            
+            try {
+                const response = await fetch('/api/chat/stream', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ' + token
+                    },
+                    body: JSON.stringify({
+                        message: continueMessage,
+                        provider: lastProvider,
+                        history: chatHistory.slice(-5), // Send last 5 messages as context
+                        session_id: sessionId || currentSessionId
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
+                hideTypingIndicator();
+                
+                // Get the last assistant message and update it
+                const messagesDiv = document.getElementById('chatMessages');
+                const messageBubbles = messagesDiv.querySelectorAll('.message-bubble.assistant');
+                const lastBubble = messageBubbles[messageBubbles.length - 1];
+                const contentDiv = lastBubble.querySelector('div:not(.rag-context)');
+                
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let newContent = '';
+                
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
@@ -971,56 +1272,37 @@
                     for (const line of lines) {
                         if (line.startsWith('data: ')) {
                             const data = line.slice(6);
-                            
-                            if (data === '[DONE]') {
-                                break;
-                            }
+                            if (data === '[DONE]' || data.startsWith(':')) continue;
                             
                             try {
                                 const json = JSON.parse(data);
-                                
-                                if (json.session_id && !currentSessionId) {
-                                    currentSessionId = json.session_id;
-                                }
-                                
                                 if (json.content) {
-                                    fullResponse += json.content;
-                                    contentElement.innerHTML = formatContent(fullResponse);
-                                    const messagesDiv = document.getElementById('chatMessages');
+                                    newContent += json.content;
+                                    contentDiv.innerHTML = formatContent(savedProgress + newContent);
                                     messagesDiv.scrollTop = messagesDiv.scrollHeight;
                                 }
-                                
-                                if (json.error) {
-                                    contentElement.innerHTML = '❌ ' + json.error;
-                                }
-                            } catch (e) {
-                                console.error('Failed to parse SSE data:', e, 'Data:', data);
-                            }
+                            } catch (e) {}
                         }
                     }
                 }
                 
-                const streamingMessage = document.getElementById('streamingMessage');
-                if (streamingMessage) {
-                    streamingMessage.removeAttribute('id');
-                }
-                
-                if (fullResponse) {
-                    chatHistory.push({ role: 'assistant', content: fullResponse });
-                    loadChatHistory();
-                }
+                // Update chat history
+                chatHistory.push({ role: 'assistant', content: savedProgress + newContent });
+                loadChatHistory();
                 
             } catch (error) {
-                hideTypingIndicator();
-                console.error('Stream error:', error);
-                addMessage('assistant', '❌ Sorry, I encountered an error. Please try again.');
+                console.error('Continue error:', error);
+                contentDiv.innerHTML = formatContent(savedProgress) + '<p class="text-red-400 mt-2">❌ Failed to continue. Response ends here.</p>';
             }
-            
-            isLoading = false;
-            input.disabled = false;
-            sendBtn.disabled = false;
-            sendBtn.innerHTML = '<span id="sendIcon">📤</span><span class="hidden sm:inline">Send</span>';
-            input.focus();
+        }
+        
+        async function continueFromLastStream() {
+            const lastStreamId = localStorage.getItem('lastStreamId');
+            if (lastStreamId) {
+                await continueStreaming(lastStreamId, null);
+            } else {
+                alert('No saved stream found');
+            }
         }
         
         function toggleSidebar() {
