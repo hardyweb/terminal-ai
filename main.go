@@ -44,12 +44,26 @@ type OpenRouterBYOKConfig struct {
 	Models                map[string]string `json:"models"`
 }
 
+type PromptsConfig struct {
+	InputMessage    string `json:"input_message"`
+	ContinuePrompt  string `json:"continue_prompt"`
+	ContinueYes     string `json:"continue_yes"`
+	MessageEmpty    string `json:"message_empty"`
+	ChatSaved       string `json:"chat_saved"`
+	LoadedSession   string `json:"loaded_session"`
+	LoadedMessages  string `json:"loaded_messages"`
+	LoadedProvider  string `json:"loaded_provider"`
+	PrimaryProvider string `json:"primary_provider"`
+	FallbackEnabled string `json:"fallback_enabled"`
+}
+
 type ProviderGlobalConfig struct {
 	DefaultProvider string                      `json:"default_provider"`
 	FallbackEnabled bool                        `json:"fallback_enabled"`
 	RetryAttempts   int                         `json:"retry_attempts"`
 	RetryDelayMs    int                         `json:"retry_delay_ms"`
 	Providers       map[string]AIProviderConfig `json:"providers"`
+	Prompts         PromptsConfig               `json:"prompts"`
 }
 
 type ProviderError struct {
@@ -88,6 +102,11 @@ type Response struct {
 
 type Choice struct {
 	Message Message `json:"message"`
+	Delta   Delta   `json:"delta,omitempty"`
+}
+
+type Delta struct {
+	Content string `json:"content,omitempty"`
 }
 
 type StreamingDelta struct {
@@ -252,6 +271,18 @@ func createDefaultProviderConfig(path string) error {
 				EndpointKey: "GROQ_ENDPOINT",
 				ModelKey:    "GROQ_MODEL",
 			},
+		},
+		Prompts: PromptsConfig{
+			InputMessage:    "Your message: ",
+			ContinuePrompt:  "\nContinue? (y/n): ",
+			ContinueYes:     "y",
+			MessageEmpty:    "Message cannot be empty",
+			ChatSaved:       "\nChat saved with ID: %s\n",
+			LoadedSession:   "Loaded session: %s\n",
+			LoadedMessages:  "   Messages: %d\n",
+			LoadedProvider:  "   Provider: %s\n",
+			PrimaryProvider: "Primary provider: %s\n",
+			FallbackEnabled: "Fallback enabled: %v\n",
 		},
 	}
 
@@ -1842,28 +1873,29 @@ func startREPLWithSession(session *ChatSession, initialMessage string) {
 
 	if session == nil {
 		if initialMessage == "" {
-			fmt.Print("Your message: ")
+			fmt.Print(providerConfig.Prompts.InputMessage)
 			reader := bufio.NewReader(os.Stdin)
 			msg, _ := reader.ReadString('\n')
 			msg = strings.TrimSpace(msg)
 			if msg == "" {
-				fmt.Println("Message cannot be empty")
+				fmt.Println(providerConfig.Prompts.MessageEmpty)
 				return
 			}
 			initialMessage = msg
 		}
 
-		fmt.Printf("🎯 Primary provider: %s\n", providerName)
-		fmt.Printf("🔄 Fallback enabled: %v\n", providerConfig.FallbackEnabled)
+		fmt.Printf(providerConfig.Prompts.PrimaryProvider, providerName)
+		fmt.Printf(providerConfig.Prompts.FallbackEnabled, providerConfig.FallbackEnabled)
 
 		session = createSession(truncateTitle(initialMessage), providerName, "user")
 		if initialMessage != "" {
 			updateSession(session.ID, "user", initialMessage)
 		}
 	} else {
-		fmt.Printf("📂 Loaded session: %s\n", session.Title)
-		fmt.Printf("   Messages: %d\n", len(session.Messages))
-		fmt.Printf("   Provider: %s\n\n", session.Provider)
+		fmt.Printf(providerConfig.Prompts.LoadedSession, session.Title)
+		fmt.Printf(providerConfig.Prompts.LoadedMessages, len(session.Messages))
+		fmt.Printf(providerConfig.Prompts.LoadedProvider, session.Provider)
+		fmt.Println()
 		providerName = session.Provider
 	}
 
@@ -1872,17 +1904,17 @@ func startREPLWithSession(session *ChatSession, initialMessage string) {
 	}
 
 	for {
-		fmt.Print("\nContinue? (y/n): ")
+		fmt.Print(providerConfig.Prompts.ContinuePrompt)
 		reader := bufio.NewReader(os.Stdin)
 		answer, _ := reader.ReadString('\n')
 		answer = strings.TrimSpace(answer)
 
-		if strings.ToLower(answer) != "y" {
-			fmt.Printf("\n💾 Chat saved with ID: %s\n", session.ID)
+		if strings.ToLower(answer) != strings.ToLower(providerConfig.Prompts.ContinueYes) {
+			fmt.Printf(providerConfig.Prompts.ChatSaved, session.ID)
 			return
 		}
 
-		fmt.Print("Your message: ")
+		fmt.Print(providerConfig.Prompts.InputMessage)
 		msg, _ := reader.ReadString('\n')
 		msg = strings.TrimSpace(msg)
 
@@ -1929,7 +1961,7 @@ func sessionWithHistory(session *ChatSession, providerName, message string) {
 	req := Request{
 		Model:    provider.Model,
 		Messages: messages,
-		Stream:   streamingEnabled,
+		Stream:   true, // Enable streaming for real-time response
 	}
 
 	var response *Response
@@ -2130,7 +2162,8 @@ func chatWithAI(providerName, message string) {
 		Messages: []Message{
 			{Role: "user", Content: finalMessage},
 		},
-		Stream: streamingEnabled,
+
+		Stream: true,
 	}
 
 	var response *Response
@@ -2365,6 +2398,11 @@ func makeRequest(endpoint, apiKey string, req Request, provider string) (*Respon
 	}
 	defer resp.Body.Close()
 
+	if req.Stream {
+		// Handle streaming response
+		return handleStreamingResponse(resp.Body, provider)
+	}
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -2376,264 +2414,72 @@ func makeRequest(endpoint, apiKey string, req Request, provider string) (*Respon
 	return &response, nil
 }
 
-func makeStreamingRequest(endpoint, apiKey string, req Request, provider string) error {
-	var reqBody []byte
-	var err error
+func handleStreamingResponse(body io.ReadCloser, provider string) (*Response, error) {
+	scanner := bufio.NewScanner(body)
+	var fullContent strings.Builder
+	var response Response
 
-	// Check if OpenRouter with BYOK enabled
-	if provider == "openrouter" {
-		if config, exists := providerConfig.Providers["openrouter"]; exists && config.BYOKConfig != nil && config.BYOKConfig.Enabled {
-			// Build OpenRouter request with BYOK provider ordering
-			openRouterReq := OpenRouterRequest{
-				Model:    req.Model,
-				Messages: req.Messages,
-				Stream:   true,
-				Provider: &OpenRouterProvider{
-					AllowFallbacks: config.BYOKConfig.AllowFallbackToShared,
-					Order:          config.BYOKConfig.ProviderOrder,
-				},
-			}
-			reqBody, err = json.Marshal(openRouterReq)
-			if err != nil {
-				return err
-			}
-			fmt.Printf("🔄 Using OpenRouter BYOK with order: %v\n", config.BYOKConfig.ProviderOrder)
-		} else {
-			// Regular OpenRouter request without BYOK
-			reqBody, err = json.Marshal(req)
-			if err != nil {
-				return err
-			}
-		}
-	} else {
-		// Non-OpenRouter providers
-		reqBody, err = json.Marshal(req)
-		if err != nil {
-			return err
-		}
+	// Animated header
+	fmt.Printf("\n")
+	for i := 0; i < 3; i++ {
+		fmt.Printf("🚀")
+		time.Sleep(100 * time.Millisecond)
 	}
-
-	// Extended timeout for long streaming responses (5 minutes)
-	client := &http.Client{Timeout: 300 * time.Second}
-
-	httpReq, err := http.NewRequest("POST", endpoint, strings.NewReader(string(reqBody)))
-	if err != nil {
-		return err
+	fmt.Printf(" Streaming from %s ", provider)
+	for i := 0; i < 3; i++ {
+		fmt.Printf("🚀")
+		time.Sleep(100 * time.Millisecond)
 	}
+	fmt.Printf("\n\n")
 
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	if provider == "openrouter" {
-		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-		httpReq.Header.Set("HTTP-Referer", "https://terminal-ai.local")
-		httpReq.Header.Set("X-Title", "Terminal AI CLI")
-	} else if provider == "gemini" {
-		httpReq.Header.Set("x-goog-api-key", apiKey)
-	} else {
-		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-
-	fmt.Println("🔄 Streaming response (timeout: 5 min, Ctrl+C to stop)...")
-
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("Connection error: %v\n💡 Tip: Try a shorter question or use a faster provider", err)
-	}
-	defer resp.Body.Close()
-
-	reader := bufio.NewReader(resp.Body)
-	lastActivity := time.Now()
-
-	for {
-		// Check for timeout - if no activity for 2 minutes, warn user
-		if time.Since(lastActivity) > 120*time.Second {
-			fmt.Printf("\n⚠️  No activity for 2 minutes... (stream may be slow)\n")
-			fmt.Printf("   Press Enter to continue waiting, or Ctrl+C to cancel\n")
-			lastActivity = time.Now() // Reset to avoid repeated warnings
-		}
-
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return fmt.Errorf("Stream error: %v", err)
-		}
-
-		line = strings.TrimSpace(line)
-		if line == "" {
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.TrimSpace(line) == "" {
 			continue
 		}
 
-		// Check for SSE data prefix
-		if !strings.HasPrefix(line, "data: ") {
-			continue
+		// Remove "data: " prefix if present
+		if strings.HasPrefix(line, "data: ") {
+			line = line[6:]
 		}
 
-		data := strings.TrimPrefix(line, "data: ")
-
-		// Check for stream end
-		if data == "[DONE]" {
+		// Skip [DONE] signals
+		if line == "[DONE]" {
 			break
 		}
 
-		// Update last activity time
-		lastActivity = time.Now()
-
-		// Parse the streaming response
-		var streamResp StreamingResponse
-		if err := json.Unmarshal([]byte(data), &streamResp); err != nil {
-			// Some providers might send different formats, skip unparseable lines
+		var chunk map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &chunk); err != nil {
 			continue
 		}
 
-		// Check for API errors in stream
-		if streamResp.Error != nil {
-			return fmt.Errorf("API Error: %s", streamResp.Error.Message)
-		}
+		// Handle different response formats
+		if choices, ok := chunk["choices"].([]interface{}); ok && len(choices) > 0 {
+			if choice, ok := choices[0].(map[string]interface{}); ok {
+				if delta, ok := choice["delta"].(map[string]interface{}); ok {
+					if content, ok := delta["content"].(string); ok && content != "" {
+						fullContent.WriteString(content)
 
-		// Extract and print content
-		if len(streamResp.Choices) > 0 {
-			content := streamResp.Choices[0].Delta.Content
-			if content != "" {
-				fmt.Print(content)
+						// Animated chunk display with colors and effects
+						chunk := content
+
+						// Add typing effect for longer chunks
+						if len(chunk) > 1 {
+							for _, char := range chunk {
+								fmt.Printf("\033[36m%c\033[0m", char) // Cyan color
+								time.Sleep(20 * time.Millisecond)     // Typing effect
+								os.Stdout.Sync()                      // Flush output
+							}
+						} else {
+							fmt.Printf("\033[36m%s\033[0m", chunk) // Cyan color
+							os.Stdout.Sync()                       // Flush output
+						}
+					}
+				}
 			}
 		}
 	}
 
-	fmt.Println() // Add newline at the end
-	return nil
-}
-
-func makeStreamingRequestWithCapture(endpoint, apiKey string, req Request, provider string, capture *string) error {
-	var reqBody []byte
-	var err error
-
-	// Check if OpenRouter with BYOK enabled
-	if provider == "openrouter" {
-		if config, exists := providerConfig.Providers["openrouter"]; exists && config.BYOKConfig != nil && config.BYOKConfig.Enabled {
-			// Build OpenRouter request with BYOK provider ordering
-			openRouterReq := OpenRouterRequest{
-				Model:    req.Model,
-				Messages: req.Messages,
-				Stream:   true,
-				Provider: &OpenRouterProvider{
-					AllowFallbacks: config.BYOKConfig.AllowFallbackToShared,
-					Order:          config.BYOKConfig.ProviderOrder,
-				},
-			}
-			reqBody, err = json.Marshal(openRouterReq)
-			if err != nil {
-				return err
-			}
-			fmt.Printf("🔄 Using OpenRouter BYOK with order: %v\n", config.BYOKConfig.ProviderOrder)
-		} else {
-			// Regular OpenRouter request without BYOK
-			reqBody, err = json.Marshal(req)
-			if err != nil {
-				return err
-			}
-		}
-	} else {
-		// Non-OpenRouter providers
-		reqBody, err = json.Marshal(req)
-		if err != nil {
-			return err
-		}
-	}
-
-	client := &http.Client{Timeout: 300 * time.Second} // Extended timeout
-
-	httpReq, err := http.NewRequest("POST", endpoint, strings.NewReader(string(reqBody)))
-	if err != nil {
-		return err
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	if provider == "openrouter" {
-		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-		httpReq.Header.Set("HTTP-Referer", "https://terminal-ai.local")
-		httpReq.Header.Set("X-Title", "Terminal AI CLI")
-	} else if provider == "gemini" {
-		httpReq.Header.Set("x-goog-api-key", apiKey)
-	} else {
-		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-
-	fmt.Println("🔄 Receiving streaming response (Ctrl+C to stop)...")
-
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("Connection error: %v\n💡 Tip: Try a shorter question or use --no-streaming flag", err)
-	}
-	defer resp.Body.Close()
-
-	var capturedContent strings.Builder
-	reader := bufio.NewReader(resp.Body)
-	lastActivity := time.Now()
-
-	for {
-		// Check for timeout - if no activity for 2 minutes, warn user
-		if time.Since(lastActivity) > 120*time.Second {
-			fmt.Printf("\n⚠️  No activity for 2 minutes... (stream may be slow)\n")
-			fmt.Printf("   Press Enter to continue waiting, or Ctrl+C to cancel\n")
-			lastActivity = time.Now() // Reset
-		}
-
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return fmt.Errorf("Stream error: %v", err)
-		}
-
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-
-		// Check for SSE data prefix
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-
-		data := strings.TrimPrefix(line, "data: ")
-
-		// Update last activity
-		lastActivity = time.Now()
-
-		// Check for stream end
-		if data == "[DONE]" {
-			break
-		}
-
-		// Parse the streaming response
-		var streamResp StreamingResponse
-		if err := json.Unmarshal([]byte(data), &streamResp); err != nil {
-			// Some providers might send different formats, skip unparseable lines
-			continue
-		}
-
-		// Check for API errors in stream
-		if streamResp.Error != nil {
-			return fmt.Errorf("API Error: %s", streamResp.Error.Message)
-		}
-
-		// Extract and print content
-		if len(streamResp.Choices) > 0 {
-			content := streamResp.Choices[0].Delta.Content
-			if content != "" {
-				fmt.Print(content)
-				capturedContent.WriteString(content)
-			}
-		}
-	}
-
-	*capture = capturedContent.String()
-	fmt.Println() // Add newline at the end
-	return nil
 }
 
 func showHelp() {
