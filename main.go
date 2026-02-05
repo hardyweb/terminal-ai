@@ -54,7 +54,7 @@ type PromptsConfig struct {
 	LoadedMessages  string `json:"loaded_messages"`
 	LoadedProvider  string `json:"loaded_provider"`
 	PrimaryProvider string `json:"primary_provider"`
-	FallbackEnabled string `json:"fallback_enabled"`
+	FallbackPrompt  string `json:"fallback_prompt"`
 }
 
 type ProviderGlobalConfig struct {
@@ -218,7 +218,12 @@ func loadProviderConfig() error {
 		return err
 	}
 
-	return json.Unmarshal(data, &providerConfig)
+	err = json.Unmarshal(data, &providerConfig)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func createDefaultProviderConfig(path string) error {
@@ -282,7 +287,7 @@ func createDefaultProviderConfig(path string) error {
 			LoadedMessages:  "   Messages: %d\n",
 			LoadedProvider:  "   Provider: %s\n",
 			PrimaryProvider: "Primary provider: %s\n",
-			FallbackEnabled: "Fallback enabled: %v\n",
+			FallbackPrompt:  "Fallback enabled: %v\n",
 		},
 	}
 
@@ -1885,7 +1890,7 @@ func startREPLWithSession(session *ChatSession, initialMessage string) {
 		}
 
 		fmt.Printf(providerConfig.Prompts.PrimaryProvider, providerName)
-		fmt.Printf(providerConfig.Prompts.FallbackEnabled, providerConfig.FallbackEnabled)
+		fmt.Printf(providerConfig.Prompts.FallbackPrompt, providerConfig.FallbackEnabled)
 
 		session = createSession(truncateTitle(initialMessage), providerName, "user")
 		if initialMessage != "" {
@@ -2419,18 +2424,24 @@ func handleStreamingResponse(body io.ReadCloser, provider string) (*Response, er
 	var fullContent strings.Builder
 	var response Response
 
-	// Animated header
-	fmt.Printf("\n")
+	writer := bufio.NewWriter(os.Stdout)
+	writer.WriteString("\n")
+	writer.Flush()
+
 	for i := 0; i < 3; i++ {
-		fmt.Printf("🚀")
+		writer.WriteString("🚀")
+		writer.Flush()
 		time.Sleep(100 * time.Millisecond)
 	}
-	fmt.Printf(" Streaming from %s ", provider)
+	writer.WriteString(fmt.Sprintf(" Streaming from %s ", provider))
+	writer.Flush()
 	for i := 0; i < 3; i++ {
-		fmt.Printf("🚀")
+		writer.WriteString("🚀")
+		writer.Flush()
 		time.Sleep(100 * time.Millisecond)
 	}
-	fmt.Printf("\n\n")
+	writer.WriteString("\n\n")
+	writer.Flush()
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -2460,19 +2471,17 @@ func handleStreamingResponse(body io.ReadCloser, provider string) (*Response, er
 					if content, ok := delta["content"].(string); ok && content != "" {
 						fullContent.WriteString(content)
 
-						// Animated chunk display with colors and effects
 						chunk := content
 
-						// Add typing effect for longer chunks
 						if len(chunk) > 1 {
 							for _, char := range chunk {
-								fmt.Printf("\033[36m%c\033[0m", char) // Cyan color
-								time.Sleep(20 * time.Millisecond)     // Typing effect
-								os.Stdout.Sync()                      // Flush output
+								writer.WriteString(fmt.Sprintf("\033[36m%c\033[0m", char))
+								writer.Flush()
+								time.Sleep(20 * time.Millisecond)
 							}
 						} else {
-							fmt.Printf("\033[36m%s\033[0m", chunk) // Cyan color
-							os.Stdout.Sync()                       // Flush output
+							writer.WriteString(fmt.Sprintf("\033[36m%s\033[0m", chunk))
+							writer.Flush()
 						}
 					}
 				}
@@ -2480,6 +2489,37 @@ func handleStreamingResponse(body io.ReadCloser, provider string) (*Response, er
 		}
 	}
 
+	// Completion animation
+	writer.WriteString("\n\n")
+	writer.Flush()
+	for i := 0; i < 5; i++ {
+		writer.WriteString("✨")
+		writer.Flush()
+		time.Sleep(50 * time.Millisecond)
+	}
+	writer.WriteString(" Response Complete ")
+	writer.Flush()
+	for i := 0; i < 5; i++ {
+		writer.WriteString("✨")
+		writer.Flush()
+		time.Sleep(50 * time.Millisecond)
+	}
+	writer.WriteString("\n\n")
+	writer.Flush()
+
+	// Create a response with the full content for session storage
+	response = Response{
+		Choices: []Choice{
+			{
+				Message: Message{
+					Role:    "assistant",
+					Content: fullContent.String(),
+				},
+			},
+		},
+	}
+
+	return &response, nil
 }
 
 func showHelp() {
