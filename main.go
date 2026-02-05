@@ -2522,6 +2522,84 @@ func handleStreamingResponse(body io.ReadCloser, provider string) (*Response, er
 	return &response, nil
 }
 
+func makeStreamingRequest(endpoint, apiKey string, req Request, provider string) error {
+	client := &http.Client{Timeout: 300 * time.Second}
+
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+
+	httpReq, err := http.NewRequest("POST", endpoint, strings.NewReader(string(reqBody)))
+	if err != nil {
+		return err
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if provider == "openrouter" {
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+		httpReq.Header.Set("HTTP-Referer", "https://terminal-ai.local")
+		httpReq.Header.Set("X-Title", "Terminal AI CLI")
+	} else if provider == "gemini" {
+		httpReq.Header.Set("x-goog-api-key", apiKey)
+	} else {
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	_, err = handleStreamingResponse(resp.Body, provider)
+	return err
+}
+
+func makeStreamingRequestWithCapture(endpoint, apiKey string, req Request, provider string, fullResponse *string) error {
+	client := &http.Client{Timeout: 300 * time.Second}
+
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+
+	httpReq, err := http.NewRequest("POST", endpoint, strings.NewReader(string(reqBody)))
+	if err != nil {
+		return err
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	if provider == "openrouter" {
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+		httpReq.Header.Set("HTTP-Referer", "https://terminal-ai.local")
+		httpReq.Header.Set("X-Title", "Terminal AI CLI")
+	} else if provider == "gemini" {
+		httpReq.Header.Set("x-goog-api-key", apiKey)
+	} else {
+		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	response, err := handleStreamingResponse(resp.Body, provider)
+	if err != nil {
+		return err
+	}
+
+	if len(response.Choices) > 0 {
+		*fullResponse = response.Choices[0].Message.Content
+	}
+
+	return nil
+}
+
 func showHelp() {
 	fmt.Println("Terminal AI CLI - AI Assistant with Web, Skills, RAG & Chat History")
 	fmt.Println()
