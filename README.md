@@ -368,3 +368,139 @@ Jika menggunakan setup manual (tanpa setup.sh), pastikan:
 - [ ] File `~/.config/terminal-ai/.env` telah di-copy dari `.env.example`
 - [ ] API keys telah dimasukkan dalam `.env`
 - [ ] Binary telah di-build: `go build -o terminal-ai .`
+
+## Memory System (ChatGPT-like Long-term Memory)
+
+Terminal AI CLI menyokong sistem memory yang mengecam, mencari, dan simpan maklumat penting dari perbualan anda secara automatik.
+
+### Command Memory
+
+```bash
+# Tambah memory manually
+./terminal-ai memory add "Nama saya Ahmad, saya seorang software engineer"
+
+# Cari memory berdasarkan semantic meaning
+./terminal-ai memory recall "siapa nama saya"
+
+# List semua memories
+./terminal-ai memory list
+
+# Padam memory tertentu
+./terminal-ai memory delete 1
+
+# Clear semua memories
+./terminal-ai memory clear
+
+# Consolidate - padam memories lama/rendah importance
+./terminal-ai memory consolidate
+```
+
+### Auto-Extraction (Otomatik)
+
+Setiap kali anda chat, AI akan auto-extract maklumat penting dari perbualan dan simpan sebagai memory:
+
+```bash
+echo "Saya kerja sebagai data scientist dan suka Python" | ./terminal-ai openrouter
+# AI akan auto-simpan:
+# - Occupation: Data scientist
+# - Preference: Python programming language
+```
+
+### Memory Encryption
+
+Semua memories disulitkan dengan AES-256 encryption sebelum disimpan dalam vector database.
+
+### Cara Penggunaan
+
+```bash
+# 1. Tambah memory
+./terminal-ai memory add "Saya alergic terhadap seafood"
+
+# 2. Chat seperti biasa - memories akan auto-extract
+echo "My name is Sarah" | ./terminal-ai openrouter
+
+# 3. Cuba recall
+./terminal-ai memory recall "siapa nama saya"
+# Result: Sarah
+./terminal-ai memory recall "apa makanan yang saya tak boleh makan"
+# Result: Seafood
+```
+
+## Ollama Local Embeddings (Percuma & Privacy)
+
+Anda boleh guna Ollama untuk embeddings secara percuma (tiada API costs, data tak hantar ke luar).
+
+### Install Ollama
+
+```bash
+# Install Ollama dari https://ollama.com
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Pull model untuk embeddings (nomic-embed-text)
+ollama pull nomic-embed-text
+```
+
+### Setup di `.env`
+
+Edit `~/.config/terminal-ai/.env`:
+
+```bash
+# Enable Ollama embeddings
+USE_OLLAMA_EMBEDDINGS=true
+OLLAMA_EMBEDDINGS_URL=http://localhost:11434/api/embeddings
+OLLAMA_EMBEDDINGS_MODEL=nomic-embed-text
+```
+
+### Model Ollama untuk Embeddings
+
+| Model | Saiz | Keterangan |
+|-------|------|------------|
+| `nomic-embed-text` | ~274MB | Bagus untuk general use |
+| `mxbai-embed-large` | ~1.3GB | Kualiti terbaik |
+| `all-minilm` | ~90MB | Paling ringan |
+
+### Cara Guna
+
+```bash
+# Pastikan Ollama sedang berjalan
+ollama serve
+
+# Tambah memory (guna Ollama embeddings)
+./terminal-ai memory add "Test memory"
+
+# Chat dengan auto-extraction
+echo "My name is John" | ./terminal-ai openrouter
+
+# Recall memories
+./terminal-ai memory recall "nama"
+```
+
+### Troubleshooting Ollama
+
+**Ollama tak responding:**
+```bash
+# Check sama ada Ollama sedang berjalan
+curl http://localhost:11434/api/tags
+
+# Jika tak running, start Ollama
+ollama serve
+```
+
+**Vector dimension error:**
+```bash
+# Ini berlaku jika switch antara OpenRouter dan Ollama
+# Clear database lama
+rm -rf ~/.local/share/terminal-ai/memory/
+
+# Cuba lagi
+./terminal-ai memory add "Test"
+```
+
+**Model tak dijumpai:**
+```bash
+# Pull model yang betul
+ollama pull nomic-embed-text
+
+# List model yang ada
+ollama list
+```

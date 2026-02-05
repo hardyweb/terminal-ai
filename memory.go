@@ -48,13 +48,15 @@ type MemoryManager struct {
 }
 
 type EmbeddingService struct {
-	apiURL  string
-	model   string
-	timeout time.Duration
+	apiURL    string
+	model     string
+	timeout   time.Duration
+	useOllama bool
 }
 
 const (
 	OpenRouterEmbeddingsURL = "https://openrouter.ai/api/v1/embeddings"
+	OllamaEmbeddingsURL     = "http://localhost:11434/api/embeddings"
 	MemoryDBFileName        = "memory.db"
 	MemoryCollectionName    = "memories"
 	DefaultTopK             = 5
@@ -64,14 +66,83 @@ const (
 var memoryMgr *MemoryManager
 
 func NewEmbeddingService() *EmbeddingService {
+	useOllama := os.Getenv("USE_OLLAMA_EMBEDDINGS") == "true"
+	ollamaURL := os.Getenv("OLLAMA_EMBEDDINGS_URL")
+
+	if useOllama && ollamaURL != "" {
+		return &EmbeddingService{
+			apiURL:    ollamaURL,
+			model:     os.Getenv("OLLAMA_EMBEDDINGS_MODEL"),
+			timeout:   120 * time.Second,
+			useOllama: true,
+		}
+	}
+
 	return &EmbeddingService{
-		apiURL:  OpenRouterEmbeddingsURL,
-		model:   "text-embedding-3-small",
-		timeout: 60 * time.Second,
+		apiURL:    OpenRouterEmbeddingsURL,
+		model:     "text-embedding-3-small",
+		timeout:   60 * time.Second,
+		useOllama: false,
 	}
 }
 
 func (e *EmbeddingService) GenerateEmbedding(ctx context.Context, text string) ([]float32, error) {
+	if e.useOllama {
+		return e.generateOllamaEmbedding(ctx, text)
+	}
+	return e.generateOpenRouterEmbedding(ctx, text)
+}
+
+func (e *EmbeddingService) generateOllamaEmbedding(ctx context.Context, text string) ([]float32, error) {
+	payload := map[string]interface{}{
+		"model":  e.model,
+		"prompt": text,
+		"stream": false,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", e.apiURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: e.timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call Ollama embedding API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	bodyResp, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("Ollama embedding API returned status %d: %s", resp.StatusCode, string(bodyResp))
+	}
+
+	var result struct {
+		Embedding []float32 `json:"embedding"`
+	}
+	if err := json.Unmarshal(bodyResp, &result); err != nil {
+		return nil, fmt.Errorf("failed to decode embeddings: %w", err)
+	}
+
+	if len(result.Embedding) == 0 {
+		return nil, fmt.Errorf("no embeddings returned from Ollama")
+	}
+
+	return result.Embedding, nil
+}
+
+func (e *EmbeddingService) generateOpenRouterEmbedding(ctx context.Context, text string) ([]float32, error) {
 	payload := map[string]interface{}{
 		"model": e.model,
 		"input": []string{text},
