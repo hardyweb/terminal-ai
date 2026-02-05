@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -357,7 +359,13 @@ func main() {
 	configPath := filepath.Join(homeDir, configDir)
 
 	godotenv.Load(filepath.Join(configPath, ".env"))
-	godotenv.Load(".env")
+
+	envPath := "/home/hardy/sandbox/terminal-ai/.env"
+	if _, err := os.Stat(envPath); err == nil {
+		godotenv.Load(envPath)
+	} else {
+		godotenv.Load(".env")
+	}
 
 	useGopass = os.Getenv("USE_GOPASS") == "true"
 	streamingEnabled = os.Getenv("STREAMING") != "false" // Default to true if not set or set to true
@@ -393,6 +401,13 @@ func main() {
 	loadRAGIndex()
 	loadChatHistory()
 
+	dataDir := filepath.Join(homeDir, ".local", "share", "terminal-ai")
+	if err := InitEncryptedMemoryManager(dataDir); err != nil {
+		fmt.Printf("Warning: Failed to initialize memory manager: %v\n", err)
+	}
+
+	InitAutoMemoryExtractor()
+
 	if len(os.Args) < 2 {
 		showHelp()
 		os.Exit(0)
@@ -421,15 +436,28 @@ func main() {
 		handleChatCommand()
 	case "history":
 		handleHistoryCommand()
+	case "memory":
+		handleMemoryCommand()
 	case "--help", "-h":
 		showHelp()
 	default:
 		if cmd == "openrouter" || cmd == "gemini" || cmd == "groq" {
 			provider := cmd
 			message := strings.Join(os.Args[2:], " ")
+			if message == "" {
+				reader := bufio.NewReader(os.Stdin)
+				content, _ := io.ReadAll(reader)
+				message = strings.TrimSpace(string(content))
+			}
 			chatWithAI(provider, message)
 		} else {
-			chatWithAI("openrouter", strings.Join(os.Args[1:], " "))
+			message := strings.Join(os.Args[1:], " ")
+			if message == "" {
+				reader := bufio.NewReader(os.Stdin)
+				content, _ := io.ReadAll(reader)
+				message = strings.TrimSpace(string(content))
+			}
+			chatWithAI("openrouter", message)
 		}
 	}
 }
@@ -1961,6 +1989,22 @@ func sessionWithHistory(session *ChatSession, providerName, message string) {
 		finalMessage += context
 	}
 
+	if mgr := GetEncryptedMemoryManager(); mgr != nil {
+		ctx := context.Background()
+		memoryResults, err := mgr.SearchAndDecrypt(ctx, message, 3)
+		if err == nil && len(memoryResults) > 0 {
+			context := "\n\nRelevant memories:\n"
+			for _, result := range memoryResults {
+				contentLen := len(result.Memory.Content)
+				if contentLen > 150 {
+					contentLen = 150
+				}
+				context += fmt.Sprintf("- %s\n", result.Memory.Content[:contentLen])
+			}
+			finalMessage += context
+		}
+	}
+
 	provider := providers[providerName]
 
 	req := Request{
@@ -1994,6 +2038,18 @@ func sessionWithHistory(session *ChatSession, providerName, message string) {
 
 		if fullResponse != "" {
 			updateSession(session.ID, "assistant", fullResponse)
+
+			// Auto-extract dari EVERY conversation
+			if extractor := GetAutoMemoryExtractor(); extractor != nil {
+				fmt.Println("\n💾 Extracting important information...")
+				conversation := "User said: " + message + "\n\nAssistant responded: " + fullResponse
+				fmt.Printf("[DEBUG] Conversation length: %d\n", len(conversation))
+				count := ExtractAndSaveMemories(conversation, session.ID)
+				fmt.Printf("[DEBUG] Extracted %d memories\n", count)
+				if count > 0 {
+					fmt.Printf("✅ Saved %d memories\n", count)
+				}
+			}
 		}
 	} else {
 		// Use non-streaming mode
@@ -2024,6 +2080,18 @@ func sessionWithHistory(session *ChatSession, providerName, message string) {
 			}
 			fmt.Println(response.Choices[0].Message.Content)
 			updateSession(session.ID, "assistant", response.Choices[0].Message.Content)
+
+			// Auto-extract dari EVERY conversation
+			if extractor := GetAutoMemoryExtractor(); extractor != nil {
+				fmt.Println("\n💾 Extracting important information...")
+				conversation := "User said: " + message + "\n\nAssistant responded: " + response.Choices[0].Message.Content
+				fmt.Printf("[DEBUG] Conversation length: %d\n", len(conversation))
+				count := ExtractAndSaveMemories(conversation, session.ID)
+				fmt.Printf("[DEBUG] Extracted %d memories\n", count)
+				if count > 0 {
+					fmt.Printf("✅ Saved %d memories\n", count)
+				}
+			}
 		}
 	}
 }
@@ -2162,6 +2230,22 @@ func chatWithAI(providerName, message string) {
 		finalMessage += context
 	}
 
+	if mgr := GetEncryptedMemoryManager(); mgr != nil {
+		ctx := context.Background()
+		memoryResults, err := mgr.SearchAndDecrypt(ctx, message, 3)
+		if err == nil && len(memoryResults) > 0 {
+			context := "\n\nRelevant memories:\n"
+			for _, result := range memoryResults {
+				contentLen := len(result.Memory.Content)
+				if contentLen > 150 {
+					contentLen = 150
+				}
+				context += fmt.Sprintf("- %s\n", result.Memory.Content[:contentLen])
+			}
+			finalMessage += context
+		}
+	}
+
 	req := Request{
 		Model: provider.Model,
 		Messages: []Message{
@@ -2184,12 +2268,48 @@ func chatWithAI(providerName, message string) {
 		}
 		fmt.Println("📝 Response (streaming):")
 
-		streamingErr = makeStreamingRequest(provider.Endpoint, provider.APIKey, req, provider.Name)
+		fmt.Fprintf(os.Stderr, "[DEBUG] chatWithAI: message = '%s', len = %d\n", message, len(message))
+
+		var fullResponse string
+		streamingErr = makeStreamingRequestWithCapture(provider.Endpoint, provider.APIKey, req, provider.Name, &fullResponse)
 		actualProvider = providerName
+
+		fmt.Fprintf(os.Stderr, "[DEBUG] chatWithAI: fullResponse len = %d, streamingErr = %v\n", len(fullResponse), streamingErr)
 
 		if streamingErr != nil {
 			fmt.Printf("\n❌ Streaming Error: %v\n", streamingErr)
 			return
+		}
+
+		if fullResponse != "" {
+			fmt.Println(fullResponse)
+
+			// Auto-extract dari EVERY conversation
+			if extractor := GetAutoMemoryExtractor(); extractor != nil {
+				fmt.Println("\n💾 Extracting important information...")
+				fmt.Printf("[DEBUG] message variable value: '%s'\n", message)
+				fmt.Printf("[DEBUG] message variable length: %d\n", len(message))
+				conversation := "User said: " + message + "\n\nAssistant responded: " + fullResponse
+				fmt.Printf("[DEBUG] fullResponse variable length: %d\n", len(fullResponse))
+				fmt.Printf("[DEBUG] Conversation length: %d\n", len(conversation))
+				fmt.Printf("[DEBUG] Full response length: %d\n", len(fullResponse))
+				fmt.Printf("[DEBUG] Conversation length: %d\n", len(conversation))
+				if len(message) > 50 {
+					fmt.Printf("[DEBUG] Message: %s...\n", message[:50])
+				} else {
+					fmt.Printf("[DEBUG] Message: %s\n", message)
+				}
+				if len(fullResponse) > 50 {
+					fmt.Printf("[DEBUG] Full response: %s...\n", fullResponse[:50])
+				} else {
+					fmt.Printf("[DEBUG] Full response: %s\n", fullResponse)
+				}
+				count := ExtractAndSaveMemories(conversation, "")
+				fmt.Printf("[DEBUG] Extracted %d memories\n", count)
+				if count > 0 {
+					fmt.Printf("✅ Saved %d memories\n", count)
+				}
+			}
 		}
 	} else {
 		// Use non-streaming mode
@@ -2219,6 +2339,18 @@ func chatWithAI(providerName, message string) {
 				fmt.Printf("📡 Response from fallback provider: %s\n", actualProvider)
 			}
 			fmt.Println(response.Choices[0].Message.Content)
+
+			// Auto-extract dari EVERY conversation
+			if extractor := GetAutoMemoryExtractor(); extractor != nil {
+				fmt.Println("\n💾 Extracting important information...")
+				conversation := "User said: " + message + "\n\nAssistant responded: " + response.Choices[0].Message.Content
+				fmt.Printf("[DEBUG] Conversation length: %d\n", len(conversation))
+				count := ExtractAndSaveMemories(conversation, "")
+				fmt.Printf("[DEBUG] Extracted %d memories\n", count)
+				if count > 0 {
+					fmt.Printf("✅ Saved %d memories\n", count)
+				}
+			}
 		}
 	}
 
@@ -2519,6 +2651,8 @@ func handleStreamingResponse(body io.ReadCloser, provider string) (*Response, er
 		},
 	}
 
+	fmt.Fprintf(os.Stderr, "[DEBUG] handleStreamingResponse: fullContent length = %d, content = '%s'\n", len(fullContent.String()), fullContent.String())
+
 	return &response, nil
 }
 
@@ -2600,8 +2734,189 @@ func makeStreamingRequestWithCapture(endpoint, apiKey string, req Request, provi
 	return nil
 }
 
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
+func handleMemoryCommand() {
+	mgr := GetEncryptedMemoryManager()
+	if mgr == nil {
+		fmt.Println("❌ Memory manager not initialized")
+		return
+	}
+
+	ctx := context.Background()
+
+	if len(os.Args) < 3 {
+		fmt.Println("Usage:")
+		fmt.Println("  terminal-ai memory add <text>           - Save to long-term memory")
+		fmt.Println("  terminal-ai memory recall <query>       - Search memories")
+		fmt.Println("  terminal-ai memory list                 - List all memories")
+		fmt.Println("  terminal-ai memory list --tags <tag>    - List memories by tag")
+		fmt.Println("  terminal-ai memory delete <id>          - Delete a memory")
+		fmt.Println("  terminal-ai memory consolidate           - Clean up old/low-importance memories")
+		fmt.Println("  terminal-ai memory clear                - Delete ALL memories")
+		return
+	}
+
+	subCmd := os.Args[2]
+
+	switch subCmd {
+	case "add":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: terminal-ai memory add <text>")
+			return
+		}
+		content := strings.Join(os.Args[3:], " ")
+		metadata := MemoryMetadata{
+			Source: "cli",
+			Tags:   []string{},
+		}
+		memory, err := mgr.AddEncryptedMemory(ctx, content, metadata)
+		if err != nil {
+			fmt.Printf("❌ Failed to add memory: %v\n", err)
+			return
+		}
+		fmt.Printf("✅ Memory saved (ID: %s)\n", memory.ID)
+
+	case "recall":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: terminal-ai memory recall <query>")
+			return
+		}
+		query := strings.Join(os.Args[3:], " ")
+		results, err := mgr.SearchAndDecrypt(ctx, query, 5)
+		if err != nil {
+			fmt.Printf("❌ Failed to search memories: %v\n", err)
+			return
+		}
+		if len(results) == 0 {
+			fmt.Println("No memories found")
+			return
+		}
+		fmt.Printf("Found %d memories:\n", len(results))
+		for i, result := range results {
+			fmt.Printf("\n%d. [%.2f] %s\n", i+1, result.Similarity, truncate(result.Memory.Content, 100))
+			fmt.Printf("   Created: %s\n", result.Memory.CreatedAt.Format("2006-01-02 15:04"))
+			if len(result.Memory.Metadata.Tags) > 0 {
+				fmt.Printf("   Tags: %v\n", result.Memory.Metadata.Tags)
+			}
+		}
+
+	case "list":
+		showTags := false
+		tagFilter := ""
+		if len(os.Args) > 3 && os.Args[3] == "--tags" {
+			showTags = true
+			if len(os.Args) > 4 {
+				tagFilter = os.Args[4]
+			}
+		}
+
+		count := mgr.base.collection.Count()
+		if count == 0 {
+			fmt.Println("No memories stored")
+			return
+		}
+
+		results, err := mgr.SearchAndDecrypt(ctx, " ", int(count))
+		if err != nil {
+			fmt.Printf("❌ Failed to list memories: %v\n", err)
+			return
+		}
+
+		if len(results) == 0 {
+			fmt.Println("No memories stored")
+			return
+		}
+
+		if tagFilter != "" {
+			var filtered []MemorySearchResult
+			for _, r := range results {
+				for _, tag := range r.Memory.Metadata.Tags {
+					if strings.Contains(strings.ToLower(tag), strings.ToLower(tagFilter)) {
+						filtered = append(filtered, r)
+						break
+					}
+				}
+			}
+			results = filtered
+		}
+
+		fmt.Printf("Total memories: %d\n", len(results))
+		for i, result := range results {
+			fmt.Printf("\n%d. [%.2f] %s\n", i+1, result.Memory.Importance, truncate(result.Memory.Content, 80))
+			fmt.Printf("   ID: %s\n", result.Memory.ID)
+			fmt.Printf("   Created: %s\n", result.Memory.CreatedAt.Format("2006-01-02 15:04"))
+			if showTags && len(result.Memory.Metadata.Tags) > 0 {
+				fmt.Printf("   Tags: %v\n", result.Memory.Metadata.Tags)
+			}
+		}
+
+	case "delete":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: terminal-ai memory delete <id_or_number>")
+			return
+		}
+		idOrNum := os.Args[3]
+
+		count := mgr.base.collection.Count()
+		results, err := mgr.SearchAndDecrypt(ctx, " ", int(count))
+		if err != nil {
+			fmt.Printf("❌ Failed to get memories: %v\n", err)
+			return
+		}
+
+		var targetID string
+		if num, err := strconv.Atoi(idOrNum); err == nil && num > 0 && num <= len(results) {
+			targetID = results[num-1].Memory.ID
+		} else {
+			targetID = idOrNum
+		}
+
+		if err := mgr.DeleteMemory(ctx, targetID); err != nil {
+			fmt.Printf("❌ Failed to delete memory: %v\n", err)
+			return
+		}
+		fmt.Printf("✅ Memory deleted\n")
+
+	case "consolidate":
+		deleted, err := mgr.ConsolidateEncryptedMemories(ctx)
+		if err != nil {
+			fmt.Printf("❌ Failed to consolidate memories: %v\n", err)
+			return
+		}
+		fmt.Printf("✅ Consolidated %d old/low-importance memories\n", deleted)
+
+	case "clear":
+		fmt.Print("Are you sure you want to delete ALL memories? (y/N): ")
+		var confirm string
+		fmt.Scanln(&confirm)
+		if confirm != "y" && confirm != "Y" {
+			fmt.Println("Cancelled")
+			return
+		}
+
+		count := mgr.base.collection.Count()
+		for i := 0; i < int(count); i++ {
+			results, _ := mgr.base.SearchMemories(ctx, " ", 1)
+			for _, result := range results {
+				mgr.DeleteMemory(ctx, result.Memory.ID)
+			}
+		}
+		fmt.Printf("✅ Deleted all memories\n")
+
+	default:
+		fmt.Printf("Unknown command: %s\n", subCmd)
+		fmt.Println("Use: add, recall, list, delete, consolidate, clear")
+	}
+}
+
 func showHelp() {
-	fmt.Println("Terminal AI CLI - AI Assistant with Web, Skills, RAG & Chat History")
+	fmt.Println("Terminal AI CLI - AI Assistant with Web, Skills, RAG, Memory & Chat History")
 	fmt.Println()
 	fmt.Println("Usage:")
 	fmt.Println("  terminal-ai [provider] <message>       - Chat with AI")
@@ -2613,7 +2928,17 @@ func showHelp() {
 	fmt.Println("  terminal-ai user list/create/delete    - User management")
 	fmt.Println("  terminal-ai provider list/test/enable/disable/priority/add/default  - Provider config")
 	fmt.Println("  terminal-ai web <url> / web-server      - Web fetch & server")
+	fmt.Println("  terminal-ai memory add/recall/list/delete/consolidate - Long-term memory")
 	fmt.Println("  terminal-ai --help                     - Show this help")
+	fmt.Println()
+	fmt.Println("Memory Commands:")
+	fmt.Println("  terminal-ai memory add <text>           - Save to long-term memory")
+	fmt.Println("  terminal-ai memory recall <query>       - Search memories")
+	fmt.Println("  terminal-ai memory list                 - List all memories")
+	fmt.Println("  terminal-ai memory list --tags <tag>    - List memories by tag")
+	fmt.Println("  terminal-ai memory delete <id>          - Delete a memory")
+	fmt.Println("  terminal-ai memory consolidate          - Clean up old/low-importance memories")
+	fmt.Println("  terminal-ai memory clear                - Delete ALL memories")
 	fmt.Println()
 	fmt.Println("Options:")
 	fmt.Println("  --no-streaming, -s    Disable streaming mode (wait for complete response)")
@@ -2626,4 +2951,5 @@ func showHelp() {
 	fmt.Println("  - Use --no-streaming for complete response at once")
 	fmt.Println("  - If streaming times out, partial response is still saved")
 	fmt.Println("  - Use faster providers (groq) for quicker responses")
+	fmt.Println("  - Use memory to remember important information across sessions")
 }
