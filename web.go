@@ -116,6 +116,10 @@ func startWebServer() {
 	router.HandleFunc("/api/providers/openrouter/byok/test", authenticate(handleTestBYOK)).Methods("POST")
 	// Telegram Bot webhook
 	router.HandleFunc("/telegram/webhook", handleTelegramWebhook).Methods("POST", "GET")
+	// Terminal WebSocket
+	router.HandleFunc("/terminal", serveTerminalPage).Methods("GET")
+	router.HandleFunc("/api/terminal/ws", authenticate(handleTerminalWebSocket)).Methods("GET")
+	router.HandleFunc("/api/terminal/sessions", authenticate(handleListSessions)).Methods("GET")
 	router.HandleFunc("/health", handleHealth).Methods("GET")
 
 	corsMiddleware := func(next http.Handler) http.Handler {
@@ -1465,4 +1469,15 @@ func handleDeleteProvider(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+}
+
+func handleListSessions(w http.ResponseWriter, r *http.Request) {
+	sessions := listTerminalSessions()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":   "success",
+		"sessions": sessions,
+		"count":    len(sessions),
+	})
 }

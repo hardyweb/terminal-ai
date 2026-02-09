@@ -73,6 +73,17 @@ go build -o terminal-ai .
 
 ## Penggunaan
 
+### Quick Start
+
+```bash
+# Start semua services (web + terminal + telegram)
+./terminal-ai start
+
+# Akses dari browser
+# Web UI: http://localhost:8181/
+# Terminal: http://localhost:8181/terminal
+```
+
 ### Chat dengan AI
 
 ```bash
@@ -317,6 +328,11 @@ GROQ_MODEL=llama-3.3-70b-versatile
 # Streaming mode (true/false)
 # true = streaming (chunk by chunk), false = single response
 STREAMING=true
+
+# Telegram Bot (Optional)
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+TELEGRAM_WEBHOOK_URL=https://your-domain.com
+TELEGRAM_ALLOWED_USERS=123456789,987654321
 ```
 
 ## Timeout Handling
@@ -605,3 +621,173 @@ ollama pull nomic-embed-text
 # List model yang ada
 ollama list
 ```
+
+## Telegram Bot Integration
+
+Chat dengan Terminal AI terus dari Telegram.
+
+### Setup
+
+1. **Buat bot dari @BotFather:**
+   - Buka Telegram, cari @BotFather
+   - Taip `/newbot`
+   - Masukkan nama dan username bot
+   - Copy token yang diberikan
+
+2. **Set environment variable:**
+```bash
+export TELEGRAM_BOT_TOKEN="your_bot_token_here"
+```
+
+3. **Start bot:**
+```bash
+./terminal-ai telegram start
+```
+
+### Bot Commands
+
+| Command | Description |
+|---------|-------------|
+| `/help` | Show help |
+| `/chat <message>` | Chat dengan AI |
+| `/interactive` | Interactive mode |
+| `/provider list/set` | Manage providers |
+| `/rag on/off/search` | RAG operations |
+| `/memory add/recall` | Memory operations |
+| `/web <url>` | Fetch web page |
+| `/status` | Show status |
+
+### User Management
+
+| Command | Description |
+|---------|-------------|
+| `/userinfo <id>` | Maklumat user |
+| `/allow <id>` | Benarkan user |
+| `/block <id>` | Sekat user |
+| `/userlist` | Senarai users |
+
+### User Access Control
+
+**Option A: Whitelist (hanya user tertentu boleh guna)**
+```bash
+export TELEGRAM_ALLOWED_USERS=123456789,987654321
+./terminal-ai telegram start
+```
+
+**Option B: Open (s siapa boleh, admin filter)**
+```bash
+# Tak set TELEGRAM_ALLOWED_USERS
+./terminal-ai telegram start
+
+# Admin boleh allow/block user
+/allow 123456789
+/block 123456789
+```
+
+## Remote Terminal (xterm.js)
+
+Akses terminal server dari browser (PC, phone, tablet).
+
+### Start Web Server
+
+```bash
+# Start web + terminal
+./terminal-ai start
+
+# Atau web server sahaja
+./terminal-ai web-server
+```
+
+### Access Terminal
+
+1. Buka browser: `http://localhost:8181/terminal`
+2. Login dengan username/password
+3. Terminal akan terbuka dalam browser
+
+### Features
+
+- Full xterm.js terminal emulation
+- WebSocket real-time communication
+- Multiple sessions support
+- Command security filtering
+- Auto-reconnect
+- Mobile-friendly UI
+
+### Toolbar Actions
+
+| Button | Action |
+|--------|--------|
+| 📺 New Session | Buka session baru |
+| 🧹 Clear | Clear terminal |
+| ⛶ Fullscreen | Fullscreen mode |
+| ❌ Disconnect | Putuskan connection |
+| ℹ️ Info | Session info |
+
+### Commands Diblok (Security)
+
+Command berbahaya akan ditolak:
+- `rm -rf /`, `mkfs`
+- Fork bombs
+- `sudo`, `su`
+- `chmod/chown 777`
+- `wget|curl | sh`
+- Netcat reverse shells
+
+## Start All Services
+
+Start web server, terminal, dan telegram bot sekali gus:
+
+```bash
+# Web + Terminal sahaja
+./terminal-ai start
+
+# Web + Terminal + Telegram
+export TELEGRAM_BOT_TOKEN="your_token"
+./terminal-ai start
+```
+
+**Output:**
+```
+🚀 Starting all services...
+
+📦 Starting Web Server...
+   🌐 Web UI:      http://localhost:8181/
+   📟 Terminal:    http://localhost:8181/terminal
+   🔌 API:         http://localhost:8181/api
+
+📱 Starting Telegram Bot...
+   ✅ Telegram bot running (polling mode)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ All services started successfully!
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+## Remote Access dengan Cloudflare Tunnel
+
+Akses dari luar network (phone, office, etc) tanpa port forwarding.
+
+### Install cloudflared (Linux):
+```bash
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+chmod +x cloudflared
+```
+
+### Start Tunnel:
+```bash
+./cloudflared tunnel --url http://localhost:8181/terminal
+```
+
+**Output:**
+```
+2024-01-01T00:00:00Z INF Starting tunnel...
+INF Tunnel established at https://random-name.trycloudflare.com
+```
+
+### Access:
+- **Web UI:** `https://your-tunnel.trycloudflare.com/`
+- **Terminal:** `https://your-tunnel.trycloudflare.com/terminal`
+- **Telegram:** Buka bot di Telegram
+
+**Nota:** Cloudflare tunnel perlu running untuk akses remote. Auto-restart dengan systemd jika perlu.
+

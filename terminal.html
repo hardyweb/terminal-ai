@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terminal AI - Remote Terminal</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/css/xterm-addon-fit.css" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #1a1a2e;
+            color: #eee;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 12px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+
+        .header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            font-size: 13px;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #4ade80;
+            animation: pulse 2s infinite;
+        }
+
+        .dot.disconnected {
+            background: #ef4444;
+            animation: none;
+        }
+
+        .dot.connecting {
+            background: #f59e0b;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        #terminal-container {
+            flex: 1;
+            padding: 15px;
+            overflow: hidden;
+        }
+
+        #terminal {
+            height: 100%;
+            width: 100%;
+        }
+
+        .toolbar {
+            background: #16213e;
+            padding: 8px 15px;
+            display: flex;
+            gap: 10px;
+            border-top: 1px solid #333;
+        }
+
+        .toolbar button {
+            background: #374151;
+            border: none;
+            color: #eee;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: background 0.2s;
+        }
+
+        .toolbar button:hover {
+            background: #4b5563;
+        }
+
+        .toolbar button.danger {
+            background: #dc2626;
+        }
+
+        .toolbar button.danger:hover {
+            background: #ef4444;
+        }
+
+        .login-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .login-modal.hidden {
+            display: none;
+        }
+
+        .login-box {
+            background: #1e293b;
+            padding: 30px;
+            border-radius: 12px;
+            width: 100%;
+            max-width: 400px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+        }
+
+        .login-box h2 {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .login-box input {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 15px;
+            border: 1px solid #475569;
+            border-radius: 8px;
+            background: #0f172a;
+            color: #eee;
+            font-size: 14px;
+        }
+
+        .login-box input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .login-box button {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            color: white;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .login-box button:hover {
+            opacity: 0.9;
+        }
+
+        .login-box .error {
+            color: #ef4444;
+            font-size: 13px;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+
+        .session-info {
+            font-size: 12px;
+            color: #9ca3af;
+        }
+
+        .info-panel {
+            position: fixed;
+            top: 60px;
+            right: 15px;
+            background: #1e293b;
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 12px;
+            z-index: 100;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            display: none;
+        }
+
+        .info-panel.visible {
+            display: block;
+        }
+
+        .info-panel h3 {
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+
+        .info-panel p {
+            margin: 5px 0;
+            color: #9ca3af;
+        }
+
+        .info-panel span {
+            color: #eee;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-modal" id="loginModal">
+        <div class="login-box">
+            <h2>🔐 Terminal AI Login</h2>
+            <p class="error" id="loginError"></p>
+            <input type="text" id="username" placeholder="Username" autocomplete="username">
+            <input type="password" id="password" placeholder="Password" autocomplete="current-password">
+            <button onclick="login()">Connect to Terminal</button>
+        </div>
+    </div>
+
+    <div class="header">
+        <h1>📟 Terminal AI Remote</h1>
+        <div class="status">
+            <div class="status-indicator">
+                <div class="dot disconnected" id="connectionDot"></div>
+                <span id="connectionStatus">Disconnected</span>
+            </div>
+            <div class="session-info" id="sessionInfo"></div>
+        </div>
+    </div>
+
+    <div id="terminal-container">
+        <div id="terminal"></div>
+    </div>
+
+    <div class="toolbar">
+        <button onclick="newSession()">📺 New Session</button>
+        <button onclick="toggleInfo()">ℹ️ Info</button>
+        <button onclick="clearTerminal()">🧹 Clear</button>
+        <button onclick="toggleFullscreen()">⛶ Fullscreen</button>
+        <button class="danger" onclick="disconnect()">❌ Disconnect</button>
+    </div>
+
+    <div class="info-panel" id="infoPanel">
+        <h3>Session Information</h3>
+        <p>Session ID: <span id="infoSessionId">-</span></p>
+        <p>Connected: <span id="infoConnected">-</span></p>
+        <p>Commands Run: <span id="infoCommands">0</span></p>
+        <p>Server: <span id="infoServer">-</span></p>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+    <script>
+        let term;
+        let fitAddon;
+        let ws;
+        let sessionId;
+        let commandCount = 0;
+        let connected = false;
+        let username = '';
+        let password = '';
+
+        const defaultShell = '/bin/bash';
+
+        function initTerminal() {
+            term = new Terminal({
+                cursorBlink: true,
+                fontSize: 14,
+                fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+                theme: {
+                    background: '#1a1a2e',
+                    foreground: '#eee',
+                    cursor: '#667eea',
+                    selectionBackground: '#667eea55',
+                    black: '#2d2d2d',
+                    red: '#ff6b6b',
+                    green: '#4ade80',
+                    yellow: '#fbbf24',
+                    blue: '#60a5fa',
+                    magenta: '#c084fc',
+                    cyan: '#22d3ee',
+                    white: '#eee',
+                    brightBlack: '#666',
+                    brightRed: '#ff8787',
+                    brightGreen: '#69db7c',
+                    brightYellow: '#ffd43b',
+                    brightBlue: '#74c0fc',
+                    brightMagenta: '#da77f2',
+                    brightCyan: '#66d9e8',
+                    brightWhite: '#fff'
+                },
+                allowTransparency: true
+            });
+
+            fitAddon = new FitAddon.FitAddon();
+            term.loadAddon(fitAddon);
+            term.open(document.getElementById('terminal'));
+            fitAddon.fit();
+
+            term.write('\r\n\x1b[32m🚀 Terminal AI Remote\x1b[0m\r\n');
+            term.write('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\r\n');
+            term.write('\x1b[33m⚡ Waiting for login...\x1b[0m\r\n\r\n');
+
+            term.onData(data => {
+                if (ws && connected) {
+                    ws.send(JSON.stringify({
+                        type: 'input',
+                        data: data
+                    }));
+                }
+            });
+
+            window.addEventListener('resize', () => {
+                if (fitAddon) {
+                    fitAddon.fit();
+                }
+            });
+
+            document.getElementById('username').focus();
+        }
+
+        async function login() {
+            username = document.getElementById('username').value;
+            password = document.getElementById('password').value;
+            const errorEl = document.getElementById('loginError');
+
+            if (!username || !password) {
+                errorEl.textContent = 'Please enter username and password';
+                return;
+            }
+
+            errorEl.textContent = 'Connecting...';
+
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Invalid credentials');
+                }
+
+                const data = await response.json();
+                document.getElementById('loginModal').classList.add('hidden');
+                connectWebSocket(data.token);
+            } catch (err) {
+                errorEl.textContent = 'Login failed: ' + err.message;
+            }
+        }
+
+        function connectWebSocket(token) {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/api/terminal/ws?token=${token}`;
+
+            ws = new WebSocket(wsUrl);
+            ws.binaryType = 'arraybuffer';
+
+            ws.onopen = () => {
+                connected = true;
+                updateConnectionStatus('connected');
+                term.clear();
+                term.write('\x1b[32m✅ Connected to Terminal AI\x1b[0m\r\n\r\n');
+
+                ws.send(JSON.stringify({
+                    type: 'create',
+                    shell: defaultShell
+                }));
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    handleMessage(msg);
+                } catch (e) {
+                    term.write(event.data);
+                }
+            };
+
+            ws.onclose = () => {
+                connected = false;
+                updateConnectionStatus('disconnected');
+                term.write('\r\n\x1b[31m🔌 Disconnected\x1b[0m\r\n');
+
+                setTimeout(() => {
+                    if (!connected) {
+                        updateConnectionStatus('connecting');
+                        connectWebSocket(token);
+                    }
+                }, 3000);
+            };
+
+            ws.onerror = (err) => {
+                console.error('WebSocket error:', err);
+                updateConnectionStatus('disconnected');
+            };
+        }
+
+        function handleMessage(msg) {
+            switch (msg.type) {
+                case 'output':
+                    term.write(msg.data);
+                    break;
+
+                case 'session':
+                    sessionId = msg.sessionId;
+                    updateSessionInfo();
+                    term.write('\x1b[32m✅ Session created: ' + sessionId + '\x1b[0m\r\n\r\n');
+                    break;
+
+                case 'error':
+                    term.write('\x1b[31m❌ Error: ' + msg.message + '\x1b[0m\r\n');
+                    break;
+
+                case 'ready':
+                    commandCount++;
+                    updateCommandCount();
+                    break;
+
+                default:
+                    console.log('Unknown message:', msg);
+            }
+        }
+
+        function newSession() {
+            if (ws && connected) {
+                ws.send(JSON.stringify({
+                    type: 'create',
+                    shell: defaultShell
+                }));
+                term.clear();
+            }
+        }
+
+        function clearTerminal() {
+            term.clear();
+        }
+
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen();
+            } else {
+                document.exitFullscreen();
+            }
+        }
+
+        function toggleInfo() {
+            document.getElementById('infoPanel').classList.toggle('visible');
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+            }
+            connected = false;
+            document.getElementById('loginModal').classList.remove('hidden');
+            document.getElementById('loginError').textContent = '';
+            term.clear();
+            term.write('\r\n\x1b[33mDisconnected. Please login again.\x1b[0m\r\n');
+            updateConnectionStatus('disconnected');
+        }
+
+        function updateConnectionStatus(status) {
+            const dot = document.getElementById('connectionDot');
+            const statusEl = document.getElementById('connectionStatus');
+
+            dot.className = 'dot ' + status;
+
+            switch (status) {
+                case 'connected':
+                    statusEl.textContent = 'Connected';
+                    break;
+                case 'connecting':
+                    statusEl.textContent = 'Connecting...';
+                    break;
+                case 'disconnected':
+                    statusEl.textContent = 'Disconnected';
+                    break;
+            }
+        }
+
+        function updateSessionInfo() {
+            document.getElementById('infoSessionId').textContent = sessionId || '-';
+            document.getElementById('infoConnected').textContent = new Date().toLocaleString();
+            document.getElementById('infoServer').textContent = window.location.host;
+        }
+
+        function updateCommandCount() {
+            document.getElementById('infoCommands').textContent = commandCount;
+        }
+
+        document.getElementById('password').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') login();
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'F11') {
+                e.preventDefault();
+                toggleFullscreen();
+            }
+        });
+
+        initTerminal();
+    </script>
+</body>
+</html>

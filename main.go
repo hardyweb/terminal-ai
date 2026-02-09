@@ -11,9 +11,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -455,6 +457,8 @@ func main() {
 		HandleInteractiveChat()
 	case "telegram":
 		handleTelegramCommand()
+	case "start", "all":
+		startAllServices()
 	case "--help", "-h":
 		showHelp()
 	default:
@@ -2957,7 +2961,9 @@ func showHelp() {
 	fmt.Println("  terminal-ai provider list/test/enable/disable/priority/add/default  - Provider config")
 	fmt.Println("  terminal-ai web <url> / web-server      - Web fetch & server")
 	fmt.Println("  terminal-ai memory add/recall/list/delete/consolidate - Long-term memory")
-	fmt.Println("  terminal-ai --help                     - Show this help")
+	fmt.Println("  terminal-ai telegram start/webhook/test - Telegram bot")
+	fmt.Println("  terminal-ai start                     - Start ALL services (web + terminal + telegram)")
+	fmt.Println("  terminal-ai --help                    - Show this help")
 	fmt.Println()
 	fmt.Println("Interactive Mode:")
 	fmt.Println("  terminal-ai interactive              - Start REPL-style chat")
@@ -3076,4 +3082,78 @@ func showTelegramHelp() {
 	fmt.Println("For webhook mode, also set:")
 	fmt.Println("  export TELEGRAM_WEBHOOK_URL=https://your-domain.com")
 	fmt.Println("  terminal-ai telegram webhook")
+}
+
+func startAllServices() {
+	var wg sync.WaitGroup
+	errors := make(chan error, 2)
+
+	telegramToken := os.Getenv("TELEGRAM_BOT_TOKEN")
+	webPort := os.Getenv("WEB_PORT")
+	if webPort == "" {
+		webPort = "8181"
+	}
+
+	fmt.Println("🚀 Starting all services...")
+	fmt.Println()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		fmt.Println("📦 Starting Web Server...")
+		fmt.Printf("   🌐 Web UI: http://localhost:%s/\n", webPort)
+		fmt.Printf("   📟 Terminal: http://localhost:%s/terminal\n", webPort)
+		fmt.Printf("   🔌 API: http://localhost:%s/api\n", webPort)
+		startWebServer()
+		errors <- fmt.Errorf("web server stopped")
+	}()
+
+	if telegramToken != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fmt.Println("📱 Starting Telegram Bot...")
+			err := initTelegramBot()
+			if err != nil {
+				fmt.Printf("   ❌ Telegram bot init failed: %v\n", err)
+				return
+			}
+			err = startTelegramBot()
+			if err != nil {
+				fmt.Printf("   ❌ Telegram bot failed: %v\n", err)
+				return
+			}
+			fmt.Println("   ✅ Telegram bot running (polling mode)")
+			fmt.Println("   💬 Open Telegram and search for your bot")
+			select {}
+		}()
+	} else {
+		fmt.Println("⚠️  TELEGRAM_BOT_TOKEN not set - Telegram bot disabled")
+	}
+
+	fmt.Println()
+	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+	fmt.Println("✅ All services started successfully!")
+	fmt.Println()
+	fmt.Println("📋 Available endpoints:")
+	fmt.Printf("   🌐 Web UI:      http://localhost:%s/\n", webPort)
+	fmt.Printf("   📟 Terminal:    http://localhost:%s/terminal\n", webPort)
+	fmt.Println("   💬 Telegram:    (requires TELEGRAM_BOT_TOKEN)")
+	fmt.Println()
+	fmt.Println("Press Ctrl+C to stop all services")
+	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+	go func() {
+		for {
+			select {
+			case err := <-errors:
+				fmt.Printf("❌ Service error: %v\n", err)
+			default:
+				runtime.Gosched()
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}()
+
+	wg.Wait()
 }
