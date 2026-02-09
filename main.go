@@ -376,6 +376,9 @@ func main() {
 		fmt.Println("📦 Single response mode (no streaming)")
 	}
 
+	// Initialize command history
+	InitHistory()
+
 	// Check for --no-streaming flag
 	noStreaming := false
 	for i, arg := range os.Args {
@@ -408,6 +411,10 @@ func main() {
 
 	InitAutoMemoryExtractor()
 
+	if err := InitHistory(); err != nil {
+		fmt.Printf("Warning: Failed to initialize command history: %v\n", err)
+	}
+
 	if len(os.Args) < 2 {
 		showHelp()
 		os.Exit(0)
@@ -423,7 +430,7 @@ func main() {
 		}
 		fetchWebContent(os.Args[2])
 	case "rag":
-		handleRAGCommand()
+		handleRAGCommandEnhanced()
 	case "skill":
 		handleSkillCommand()
 	case "user":
@@ -436,8 +443,16 @@ func main() {
 		handleChatCommand()
 	case "history":
 		handleHistoryCommand()
+	case "cmd":
+		HandleCommandHistory()
+	case "command":
+		HandleCommandHistory()
+	case "config":
+		HandleConfigCommand()
 	case "memory":
 		handleMemoryCommand()
+	case "interactive", "chat-i", "interactive-mode":
+		HandleInteractiveChat()
 	case "--help", "-h":
 		showHelp()
 	default:
@@ -459,6 +474,16 @@ func main() {
 			}
 			chatWithAI("openrouter", message)
 		}
+	}
+
+	// Track command in history (except for cmd and help)
+	cmdName := ""
+	if len(os.Args) > 1 {
+		cmdName = os.Args[1]
+	}
+	if cmdName != "" && cmdName != "cmd" && cmdName != "command" && cmdName != "help" && cmdName != "--help" && cmdName != "-h" {
+		fullCommand := strings.Join(os.Args, " ")
+		AddToHistory(fullCommand)
 	}
 }
 
@@ -2921,8 +2946,11 @@ func showHelp() {
 	fmt.Println("Usage:")
 	fmt.Println("  terminal-ai [provider] <message>       - Chat with AI")
 	fmt.Println("  terminal-ai [provider] --no-streaming <message>  - Chat without streaming")
+	fmt.Println("  terminal-ai interactive              - Start interactive chat mode")
 	fmt.Println("  terminal-ai chat --list/--new/--last/--session <id>  - Chat sessions")
 	fmt.Println("  terminal-ai history list/view/export/delete <id>/clear  - Chat history")
+	fmt.Println("  terminal-ai cmd list/search/recent/clear/dedup     - Command tracking")
+	fmt.Println("  terminal-ai config list/get/set/unset/reset  - Configuration")
 	fmt.Println("  terminal-ai rag index <dir> / search <query>  - Local RAG")
 	fmt.Println("  terminal-ai skill list/create <name>   - Custom skills")
 	fmt.Println("  terminal-ai user list/create/delete    - User management")
@@ -2930,6 +2958,33 @@ func showHelp() {
 	fmt.Println("  terminal-ai web <url> / web-server      - Web fetch & server")
 	fmt.Println("  terminal-ai memory add/recall/list/delete/consolidate - Long-term memory")
 	fmt.Println("  terminal-ai --help                     - Show this help")
+	fmt.Println()
+	fmt.Println("Interactive Mode:")
+	fmt.Println("  terminal-ai interactive              - Start REPL-style chat")
+	fmt.Println("  /quit   - Exit interactive mode")
+	fmt.Println("  /help   - Show commands")
+	fmt.Println("  /clear  - Clear screen")
+	fmt.Println("  /provider groq - Change provider")
+	fmt.Println()
+	fmt.Println("Chat History:")
+	fmt.Println("  terminal-ai history list               - List chat sessions")
+	fmt.Println("  terminal-ai history view <id>         - View a session")
+	fmt.Println("  terminal-ai history export <id>        - Export session")
+	fmt.Println("  terminal-ai history delete <id>        - Delete session")
+	fmt.Println()
+	fmt.Println("Command Tracking:")
+	fmt.Println("  terminal-ai cmd list                 - List all commands")
+	fmt.Println("  terminal-ai cmd search <prefix>        - Search commands")
+	fmt.Println("  terminal-ai cmd recent [count]        - Show recent commands")
+	fmt.Println("  terminal-ai cmd clear                  - Clear command history")
+	fmt.Println("  terminal-ai cmd dedup                  - Remove duplicates")
+	fmt.Println()
+	fmt.Println("Configuration:")
+	fmt.Println("  terminal-ai config list                - List all settings")
+	fmt.Println("  terminal-ai config get <key>           - Get a setting")
+	fmt.Println("  terminal-ai config set <key>=<value>   - Set a setting")
+	fmt.Println("  terminal-ai config unset <key>         - Unset a setting")
+	fmt.Println("  terminal-ai config reset               - Reset to defaults")
 	fmt.Println()
 	fmt.Println("Memory Commands:")
 	fmt.Println("  terminal-ai memory add <text>           - Save to long-term memory")
