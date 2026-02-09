@@ -127,17 +127,37 @@ Contoh:
 
 ### RAG (Retrieval Augmented Generation)
 
-Index dan cari nota-nota lokal anda:
+Index dan cari nota-nota lokal anda dengan hybrid search (vector + keyword):
 
 ```bash
-# Index semua fail dalam direktori
-./terminal-ai rag index /path/to/notes
-
-# Cari nota yang berkaitan
-./terminal-ai rag search "quantum computing"
+# Enhanced RAG Commands
+./terminal-ai rag add ~/Documents/notes          # Tambah direktori
+./terminal-ai rag add ~/Projects/docs --update    # Update (incremental)
+./terminal-ai rag list                            # Senarai sources
+./terminal-ai rag status                          # Status index
+./terminal-ai rag search "query"                  # Hybrid search
+./terminal-ai rag search "query" --type web      # Filter web sources
+./terminal-ai rag remove ~/Documents/notes       # Buang source
+./terminal-ai rag clear                          # Clear semua index
+./terminal-ai rag web https://example.com         # Index web page
 ```
 
-Nota akan disimpan di `$XDG_DATA_HOME/terminal-ai/rag-index.json` (jika `$XDG_DATA_HOME` diset) atau `$HOME/.local/share/terminal-ai/rag-index.json`
+**Hybrid Search Features:**
+- 60% Vector similarity + 40% Keyword (BM25)
+- Semantic search + exact keyword matching
+- Top 20 results fused dan ranked
+
+**Incremental Updates:**
+- SHA-256 hash tracking untuk setiap file
+- Hanya file yang berubah akan di-reindex
+- Efisien untuk folder besar
+
+**Web Scraping:**
+- Static HTML scraping tanpa JavaScript
+- Auto-index paragraph dan headings
+- Boleh update web sources yang sama
+
+Nota akan disimpan di `$XDG_DATA_HOME/terminal-ai/` atau `$HOME/.local/share/terminal-ai/`
 
 ### Skills System
 
@@ -186,6 +206,65 @@ Selepas mendapat respons, CLI akan tanya sama ada anda ingin teruskan perbualan:
 - Ulang langkah di atas untuk terus chat
 - Tekan `n` atau Enter kosong untuk keluar
 
+## Interactive Chat Mode
+
+Masuk ke mod chat berterusan secara langsung:
+
+```bash
+./terminal-ai interactive
+./terminal-ai interactive --provider groq
+```
+
+### Commands dalam Interactive Mode
+
+| Command | Description |
+|---------|-------------|
+| `/help`, `?` | Show help |
+| `/quit`, `/exit` | Exit chat |
+| `/clear` | Clear screen |
+| `/history` | Show chat history |
+| `/stats` | Session statistics |
+| `/provider <name>` | Switch AI provider |
+| `/model <name>` | Set model |
+| `/rag on\|off` | Enable/disable RAG context |
+| `/rag` | Show RAG status |
+| `/index <dir>` | Index a directory |
+| `/search <query>` | Search indexed documents |
+| `/tokens` | Token tracking (placeholder) |
+
+### RAG Context dalam Interactive Mode
+
+Mod ini menyokong RAG secara langsung - tanya soalan tentang dokumen yang telah di-index:
+
+```bash
+./terminal-ai interactive
+
+# Dalam chat:
+➤ You: Apa yang sayacatat tentang ModSecurity?
+# AI akan cari dalam indexed documents dan jawab
+
+➤ You: /index ~/Documents/notes
+# Index direktori baru
+
+➤ You: /search nginx
+# Cari dokumen berkaitan nginx
+```
+
+**Status RAG dipaparkan di welcome message:**
+```
+RAG: ✅ Active | Sources: 237 | Chunks: 1602
+```
+
+### Streaming dalam Interactive Mode
+
+Response muncul token-by-token secara real-time dengan animasi:
+
+```
+🚀🚀🚀 Streaming from openrouter 🚀🚀🚀
+[response muncul satu per satu]
+✨ Response Complete ✨
+```
+
 ## RAG + Skills Integration
 
 Apabila anda chat:
@@ -215,7 +294,8 @@ Contoh workflow:
 - `~/.config/terminal-ai/.env` - Environment variables dan API keys
 - `~/.config/terminal-ai/providers.json` - Provider configuration
 - `~/.config/terminal-ai/skills/` - Custom skills
-- `$XDG_DATA_HOME/terminal-ai/rag-index.json` atau `$HOME/.local/share/terminal-ai/rag-index.json` - RAG index cache
+- `~/.config/terminal-ai/completion/` - Shell completion scripts
+- `$XDG_DATA_HOME/terminal-ai/` atau `$HOME/.local/share/terminal-ai/` - RAG index, vector database, chat history
 
 **Nota Penting:** Untuk setup manual tanpa `setup.sh`, anda **MESTI** create folder `~/.config/terminal-ai/user/` secara manual sebelum boleh menggunakan command `terminal-ai user create`. Jika folder ini tidak wujud, command create user akan fail.
 
@@ -300,23 +380,44 @@ Web UI ada fitur timeout recovery untuk response panjang:
 # Fetch web content
 ./terminal-ai web https://en.wikipedia.org/wiki/Quantum_computing
 
-# Index nota projek
-./terminal-ai rag index ~/projects/docs
+# Enhanced RAG Commands
+./terminal-ai rag add ~/projects/docs              # Tambah direktori
+./terminal-ai rag add ~/notes --update             # Update (incremental)
+./terminal-ai rag search "API authentication"      # Hybrid search
+./terminal-ai rag web https://example.com          # Index web page
 
-# Cari nota berkaitan
-./terminal-ai rag search "API authentication"
-
-# Create skill untuk documentation
-./terminal-ai skill create doc-writer
-# Description: Write technical documentation
-# Triggers: document, documentation, docs
-# Template: Write clear technical documentation for:
-
-# Chat dengan skill + RAG
-./terminal-ai "document the authentication system"
+# Interactive Chat Mode dengan RAG
+./terminal-ai interactive
+# ➤ You: Apa yang saya catat tentang Docker?
+# ➤ You: /index ~/new-notes
+# ➤ You: /search kubernetes
 ```
 
 ## Troubleshooting
+
+### Interactive Mode Issues
+
+**Tiada response:**
+```bash
+# Check provider configuration
+./terminal-ai provider list
+
+# Cuba provider lain
+./terminal-ai interactive --provider groq
+```
+
+**RAG tak berfungsi dalam interactive mode:**
+```bash
+# Check RAG status
+./terminal-ai rag status
+
+# Index documents dulu
+./terminal-ai rag add ~/documents
+
+# Cuba dalam interactive mode
+./terminal-ai interactive
+# ➤ You: /rag on
+```
 
 ### Jika timeout error:
 
