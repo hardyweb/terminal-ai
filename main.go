@@ -2676,8 +2676,6 @@ func handleStreamingResponse(body io.ReadCloser, provider string) (*Response, er
 		},
 	}
 
-	fmt.Fprintf(os.Stderr, "[DEBUG] handleStreamingResponse: fullContent length = %d, content = '%s'\n", len(fullContent.String()), fullContent.String())
-
 	return &response, nil
 }
 

@@ -8,26 +8,43 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"terminal-ai/rag"
 )
 
 type InteractiveSession struct {
-	provider   string
-	sessionID  string
-	input      *bufio.Reader
-	ragEnabled bool
-	ctx        context.Context
-	cancel     context.CancelFunc
+	provider     string
+	sessionID    string
+	input        *bufio.Reader
+	ragEnabled   bool
+	ragManager   *rag.RAGManager
+	hybridEngine *rag.HybridSearchEngine
+	ctx          context.Context
+	cancel       context.CancelFunc
 }
 
 func NewInteractiveSession(provider string) *InteractiveSession {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &InteractiveSession{
+	session := &InteractiveSession{
 		provider:   provider,
 		input:      bufio.NewReader(os.Stdin),
 		ragEnabled: true,
 		ctx:        ctx,
 		cancel:     cancel,
 	}
+	session.initRAG()
+	return session
+}
+
+func (s *InteractiveSession) initRAG() {
+	ragManager, err := rag.NewRAGManager()
+	if err != nil {
+		fmt.Println(colorWarning("⚠ RAG initialization failed: " + err.Error()))
+		s.ragEnabled = false
+		return
+	}
+	s.ragManager = ragManager
+	s.hybridEngine = rag.NewHybridSearchEngine(ragManager)
 }
 
 func (s *InteractiveSession) Start() {
@@ -35,6 +52,7 @@ func (s *InteractiveSession) Start() {
 	printWelcomeBanner()
 
 	fmt.Println(colorInfo("AI Provider: " + s.provider))
+	s.printRAGStatus()
 
 	for {
 		if s.ctx.Err() != nil {
@@ -73,6 +91,7 @@ func (s *InteractiveSession) Start() {
 		case "/rag on":
 			s.ragEnabled = true
 			fmt.Println(colorSuccess("✓ RAG enabled"))
+			s.printRAGStatus()
 			continue
 		case "/rag off":
 			s.ragEnabled = false
@@ -84,6 +103,7 @@ func (s *InteractiveSession) Start() {
 				status = "disabled"
 			}
 			fmt.Printf(colorInfo("RAG is %s (use /rag on|off to toggle)\n"), status)
+			s.printRAGStatus()
 			continue
 		}
 
@@ -111,6 +131,26 @@ func (s *InteractiveSession) Start() {
 			continue
 		}
 
+		if strings.HasPrefix(message, "/index ") {
+			dir := strings.TrimSpace(strings.TrimPrefix(message, "/index "))
+			if dir != "" {
+				s.indexDirectory(dir)
+			} else {
+				fmt.Println(colorInfo("Usage: /index <directory_path>"))
+			}
+			continue
+		}
+
+		if strings.HasPrefix(message, "/search ") {
+			query := strings.TrimSpace(strings.TrimPrefix(message, "/search "))
+			if query != "" {
+				s.searchRAG(query)
+			} else {
+				fmt.Println(colorInfo("Usage: /search <query>"))
+			}
+			continue
+		}
+
 		s.sendMessage(message)
 	}
 }
@@ -127,13 +167,66 @@ func (s *InteractiveSession) sendMessage(message string) {
 		{Role: "user", Content: message},
 	}
 
+	if s.ragEnabled && s.hybridEngine != nil {
+		ctx := context.Background()
+		results, err := s.hybridEngine.Search(ctx, message)
+		if err == nil && len(results) > 0 {
+			var contextBuilder strings.Builder
+			contextBuilder.WriteString("DOCUMENT REFERENCES:\n")
+			for i, r := range results {
+				if i >= 5 {
+					break
+				}
+				sourceName := r.SourcePath
+				if r.SourceType == "web" && r.SourceURL != "" {
+					sourceName = r.SourceURL
+				}
+				shortName := sourceName
+				if len(shortName) > 50 {
+					shortName = "..." + shortName[len(shortName)-47:]
+				}
+				content := strings.TrimSpace(r.Content)
+				content = strings.ReplaceAll(content, "```", "")
+				lines := strings.Split(content, "\n")
+				var cleanLines []string
+				for _, line := range lines {
+					line = strings.TrimSpace(line)
+					if len(line) > 5 && !strings.HasPrefix(line, "---") &&
+						!strings.HasPrefix(line, "###") && !strings.HasPrefix(line, "##") &&
+						!strings.HasPrefix(line, "**") && !strings.HasPrefix(line, "* ") &&
+						!strings.HasPrefix(line, "- ") && !strings.HasPrefix(line, "1.") &&
+						!strings.HasPrefix(line, "2.") && !strings.HasPrefix(line, "3.") {
+						if len(line) < 200 {
+							cleanLines = append(cleanLines, line)
+						}
+					}
+				}
+				maxLines := 3
+				if len(cleanLines) < maxLines {
+					maxLines = len(cleanLines)
+				}
+				cleanContent := content[:min(300, len(content))]
+				if maxLines > 0 {
+					cleanContent = strings.Join(cleanLines[:maxLines], " ")
+				}
+				if len(cleanContent) > 300 {
+					cleanContent = cleanContent[:297] + "..."
+				}
+				contextBuilder.WriteString(fmt.Sprintf("[%d] %s\n%s\n\n", i+1, shortName, cleanContent))
+			}
+
+			messages = []Message{
+				{Role: "system", Content: "Answer the user's question based on the document references provided. Keep your answer natural and concise. Do not show the reference numbers or source names in your answer unless the user asks."},
+				{Role: "user", Content: contextBuilder.String() + "\n\nUser's question: " + message},
+			}
+		}
+	}
+
 	req := Request{
 		Model:    provider.Model,
 		Messages: messages,
 		Stream:   true,
 	}
-
-	fmt.Print(colorBold(colorCyan("\n🤖 " + strings.Title(s.provider) + ": ")))
 
 	type Response struct {
 		content string
@@ -160,21 +253,6 @@ func (s *InteractiveSession) sendMessage(message string) {
 			fmt.Println(colorError(fmt.Sprintf("\nError: %v", resp.err)))
 			return
 		}
-		content := resp.content
-
-		words := strings.Fields(content)
-		wordCount := 0
-		for _, word := range words {
-			fmt.Print(word + " ")
-			wordCount++
-			if wordCount >= 15 {
-				fmt.Println()
-				fmt.Print(colorBold(colorCyan("\n🤖 " + strings.Title(s.provider) + ": ")))
-				wordCount = 0
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-		fmt.Println()
 	case <-time.After(120 * time.Second):
 		fmt.Println(colorWarning("\n[Response timeout]"))
 		return
@@ -205,10 +283,91 @@ func (s *InteractiveSession) showChatHistory() {
 	}
 }
 
+func (s *InteractiveSession) printRAGStatus() {
+	if s.ragManager == nil {
+		fmt.Println(colorWarning("  RAG: Not initialized"))
+		return
+	}
+
+	stats, err := s.ragManager.GetStats()
+	if err != nil {
+		fmt.Println(colorInfo("  RAG: Initialized (stats unavailable)"))
+		return
+	}
+
+	status := "✅ Active"
+	if !s.ragEnabled {
+		status = "⚪ Disabled"
+	}
+	fmt.Printf(colorInfo("  RAG: %s | Sources: %d | Chunks: %d\n"), status, stats.TotalSources, stats.TotalChunks)
+}
+
+func (s *InteractiveSession) indexDirectory(dir string) {
+	if s.ragManager == nil {
+		fmt.Println(colorError("RAG not initialized"))
+		return
+	}
+
+	fmt.Printf(colorInfo("📚 Indexing: %s\n"), dir)
+	report, err := s.ragManager.IndexDirectory(dir)
+	if err != nil {
+		fmt.Println(colorError(fmt.Sprintf("Error: %v", err)))
+		return
+	}
+
+	fmt.Printf(colorSuccess("✅ Added %d files (%d chunks)\n"), report.Added, report.TotalChunks)
+	s.printRAGStatus()
+}
+
+func (s *InteractiveSession) searchRAG(query string) {
+	if s.ragManager == nil {
+		fmt.Println(colorError("RAG not initialized"))
+		return
+	}
+
+	ctx := context.Background()
+	results, err := s.hybridEngine.Search(ctx, query)
+	if err != nil {
+		fmt.Println(colorError(fmt.Sprintf("Search error: %v", err)))
+		return
+	}
+
+	if len(results) == 0 {
+		fmt.Println(colorInfo("No results found"))
+		return
+	}
+
+	fmt.Printf(colorInfo("🔍 Found %d relevant document(s):\n\n"), len(results))
+	for i, r := range results {
+		sourceType := "📄"
+		if r.SourceType == "web" {
+			sourceType = "🌐"
+		}
+		sourceName := r.SourcePath
+		if r.SourceType == "web" && r.SourceURL != "" {
+			sourceName = r.SourceURL
+		}
+		if len(sourceName) > 50 {
+			sourceName = sourceName[:47] + "..."
+		}
+		fmt.Printf("%d. %s %s\n", i+1, sourceType, sourceName)
+		content := r.Content
+		if len(content) > 200 {
+			content = content[:197] + "..."
+		}
+		fmt.Printf("   %s\n\n", content)
+	}
+}
+
 func (s *InteractiveSession) showStats() {
 	fmt.Println(colorBold("\n📊 Session Statistics:"))
 	fmt.Printf("  Provider: %s\n", s.provider)
 	fmt.Printf("  RAG: %v\n", s.ragEnabled)
+	if s.ragManager != nil {
+		stats, _ := s.ragManager.GetStats()
+		fmt.Printf("  Sources: %d\n", stats.TotalSources)
+		fmt.Printf("  Chunks: %d\n", stats.TotalChunks)
+	}
 }
 
 func clearScreen() {
@@ -238,9 +397,9 @@ func printWelcomeBanner() {
 
 func printInteractiveHelp() {
 	help := `
-╔═══════════════════════════════════════════════════════╗
+╔═══════════════════════════════════════════════════════════════╗
 ║                  Available Commands                 ║
-╠═══════════════════════════════════════════════════════╣
+╠═══════════════════════════════════════════════════════════════╣
 ║  /help, ?          Show this help                ║
 ║  /quit, /exit      Exit chat                     ║
 ║  /clear            Clear screen                   ║
@@ -249,10 +408,13 @@ func printInteractiveHelp() {
 ║  /provider <name>  Switch provider               ║
 ║  /model <name>     Set model                     ║
 ║  /rag on|off       Enable/disable RAG            ║
+║  /rag              Show RAG status               ║
+║  /index <dir>      Index a directory             ║
+║  /search <query>   Search documents              ║
 ║  /tokens           Token tracking                 ║
-╠═══════════════════════════════════════════════════════╣
+╠═══════════════════════════════════════════════════════════════╣
 ║  Just type your message and press Enter!        ║
-╚═══════════════════════════════════════════════════════╝`
+╚═══════════════════════════════════════════════════════════════╝`
 	fmt.Println(help)
 }
 
