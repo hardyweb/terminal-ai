@@ -41,6 +41,8 @@ func handleRAGCommandEnhanced() {
 		handleRAGWeb()
 	case "search":
 		handleRAGSearchEnhanced()
+	case "summarize":
+		handleRAGSummarize()
 	case "status":
 		handleRAGStatus()
 	case "list":
@@ -160,6 +162,110 @@ func handleRAGSearchEnhanced() {
 	}
 
 	printEnhancedSearchResults(results, query, stats.SearchTime)
+}
+
+func handleRAGSummarize() {
+	if len(os.Args) < 4 {
+		fmt.Println(colorError("Usage: terminal-ai rag summarize <query>"))
+		fmt.Println(colorInfo("Example: terminal-ai rag summarize PHP-FPM pools"))
+		os.Exit(1)
+	}
+
+	query := strings.Join(os.Args[3:], " ")
+
+	if err := initRAGEnhanced(); err != nil {
+		fmt.Printf("%s Failed to initialize RAG: %v\n", CrossMark, err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("%s Searching and summarizing: %s\n", SearchIcon, colorBold(query))
+
+	ctx := context.Background()
+
+	results, _, err := hybridEngine.SearchWithStats(ctx, query)
+	if err != nil {
+		fmt.Printf("%s Error searching: %v\n", CrossMark, err)
+		os.Exit(1)
+	}
+
+	if len(results) == 0 {
+		fmt.Printf("%s No results found.\n", WarningMark)
+		return
+	}
+
+	fmt.Printf("\n%s Summary of top %d results:\n", colorBold("📋"), len(results))
+	fmt.Println(strings.Repeat("─", 50))
+
+	for i, result := range results {
+		sourceName := result.SourcePath
+		if result.SourceType == "web" && result.SourceURL != "" {
+			sourceName = result.SourceURL
+		}
+
+		fmt.Printf("\n%s %d. %s\n", colorCyan("📄"), i+1, sourceName)
+		fmt.Printf("   Score: %.3f | Length: %d chars\n", result.HybridScore, len(result.Content))
+
+		summary := summarizeContent(result.Content)
+		fmt.Printf("\n   %s\n", wrapText(summary, 60))
+		fmt.Println()
+	}
+}
+
+func summarizeContent(content string) string {
+	lines := strings.Split(content, "\n")
+	var cleanLines []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if len(line) > 20 && !strings.HasPrefix(line, "---") &&
+			!strings.HasPrefix(line, "###") && !strings.HasPrefix(line, "##") &&
+			!strings.HasPrefix(line, "```") && !strings.HasPrefix(line, "<!--") {
+			cleanLines = append(cleanLines, line)
+		}
+	}
+
+	maxChars := 500
+	if len(cleanLines) == 0 {
+		if len(content) > maxChars {
+			return content[:maxChars] + "..."
+		}
+		return content
+	}
+
+	var summaryLines []string
+	chars := 0
+	for _, line := range cleanLines {
+		if chars > maxChars {
+			break
+		}
+		summaryLines = append(summaryLines, line)
+		chars += len(line)
+	}
+
+	result := strings.Join(summaryLines, "\n")
+	if len(result) > maxChars {
+		result = result[:maxChars] + "..."
+	}
+
+	return result
+}
+
+func wrapText(text string, width int) string {
+	var result strings.Builder
+	words := strings.Fields(text)
+	lineLen := 0
+	for _, word := range words {
+		if lineLen+len(word)+1 > width {
+			result.WriteString("\n   ")
+			lineLen = 3
+		}
+		if lineLen > 3 {
+			result.WriteString(" ")
+			lineLen++
+		}
+		result.WriteString(word)
+		lineLen += len(word)
+	}
+	return result.String()
 }
 
 func handleRAGStatus() {

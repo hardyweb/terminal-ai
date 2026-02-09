@@ -12,6 +12,8 @@ import (
 	"terminal-ai/rag"
 )
 
+const pageSize = 5
+
 type InteractiveSession struct {
 	provider     string
 	sessionID    string
@@ -147,6 +149,16 @@ func (s *InteractiveSession) Start() {
 				s.searchRAG(query)
 			} else {
 				fmt.Println(colorInfo("Usage: /search <query>"))
+			}
+			continue
+		}
+
+		if strings.HasPrefix(message, "/summarize ") {
+			query := strings.TrimSpace(strings.TrimPrefix(message, "/summarize "))
+			if query != "" {
+				s.summarizeRAG(query)
+			} else {
+				fmt.Println(colorInfo("Usage: /summarize <query>"))
 			}
 			continue
 		}
@@ -337,25 +349,132 @@ func (s *InteractiveSession) searchRAG(query string) {
 		return
 	}
 
-	fmt.Printf(colorInfo("🔍 Found %d relevant document(s):\n\n"), len(results))
-	for i, r := range results {
-		sourceType := "📄"
-		if r.SourceType == "web" {
-			sourceType = "🌐"
+	s.displayPaginatedResults(results, "Search")
+}
+
+func (s *InteractiveSession) summarizeRAG(query string) {
+	if s.ragManager == nil {
+		fmt.Println(colorError("RAG not initialized"))
+		return
+	}
+
+	fmt.Printf(colorInfo("🔍 Searching and summarizing: %s\n\n"), query)
+
+	ctx := context.Background()
+	results, err := s.hybridEngine.Search(ctx, query)
+	if err != nil {
+		fmt.Println(colorError(fmt.Sprintf("Search error: %v", err)))
+		return
+	}
+
+	if len(results) == 0 {
+		fmt.Println(colorInfo("No results found"))
+		return
+	}
+
+	s.displayPaginatedSummaries(results)
+}
+
+func (s *InteractiveSession) displayPaginatedResults(results []rag.HybridSearchResult, mode string) {
+	total := len(results)
+	currentPage := 0
+
+	for {
+		start := currentPage * pageSize
+		end := start + pageSize
+		if end > total {
+			end = total
 		}
-		sourceName := r.SourcePath
-		if r.SourceType == "web" && r.SourceURL != "" {
-			sourceName = r.SourceURL
+
+		fmt.Printf(colorInfo("\n📋 %s Results %d-%d of %d:\n"), mode, start+1, end, total)
+		fmt.Println("═══════════════════════════════════════════════════════")
+
+		for i := start; i < end; i++ {
+			r := results[i]
+			sourceType := "📄"
+			if r.SourceType == "web" {
+				sourceType = "🌐"
+			}
+			sourceName := r.SourcePath
+			if r.SourceType == "web" && r.SourceURL != "" {
+				sourceName = r.SourceURL
+			}
+			if len(sourceName) > 50 {
+				sourceName = sourceName[:47] + "..."
+			}
+			fmt.Printf("\n%d. %s %s\n", i+1, sourceType, sourceName)
+			fmt.Printf("   Score: %.3f | Length: %d chars\n", r.HybridScore, len(r.Content))
+			content := r.Content
+			if len(content) > 200 {
+				content = content[:197] + "..."
+			}
+			fmt.Printf("   %s\n", content)
 		}
-		if len(sourceName) > 50 {
-			sourceName = sourceName[:47] + "..."
+
+		fmt.Println()
+
+		if end >= total {
+			break
 		}
-		fmt.Printf("%d. %s %s\n", i+1, sourceType, sourceName)
-		content := r.Content
-		if len(content) > 200 {
-			content = content[:197] + "..."
+
+		fmt.Print(colorInfo("Press [Enter] for more, [q] to quit: "))
+		line, _ := s.input.ReadString('\n')
+		line = strings.TrimSpace(line)
+		if line == "q" || line == "Q" {
+			break
 		}
-		fmt.Printf("   %s\n\n", content)
+		fmt.Println()
+	}
+}
+
+func (s *InteractiveSession) displayPaginatedSummaries(results []rag.HybridSearchResult) {
+	total := len(results)
+	currentPage := 0
+
+	for {
+		start := currentPage * pageSize
+		end := start + pageSize
+		if end > total {
+			end = total
+		}
+
+		fmt.Printf(colorInfo("\n📋 Summary %d-%d of %d:\n"), start+1, end, total)
+		fmt.Println("═══════════════════════════════════════════════════════")
+
+		for i := start; i < end; i++ {
+			r := results[i]
+			sourceType := "📄"
+			if r.SourceType == "web" {
+				sourceType = "🌐"
+			}
+			sourceName := r.SourcePath
+			if r.SourceType == "web" && r.SourceURL != "" {
+				sourceName = r.SourceURL
+			}
+			if len(sourceName) > 50 {
+				sourceName = "..." + sourceName[len(sourceName)-47:]
+			}
+
+			fmt.Printf("\n%s %d. %s %s\n", colorCyan("📄"), i+1, sourceType, sourceName)
+			fmt.Printf("   Score: %.3f | Length: %d chars\n", r.HybridScore, len(r.Content))
+
+			summary := summarizeContent(r.Content)
+			fmt.Printf("\n   %s\n", wrapText(summary, 60))
+		}
+
+		fmt.Println()
+
+		if end >= total {
+			break
+		}
+
+		fmt.Print(colorInfo("Press [Enter] for more, [q] to quit: "))
+		line, _ := s.input.ReadString('\n')
+		line = strings.TrimSpace(line)
+		if line == "q" || line == "Q" {
+			break
+		}
+		fmt.Println()
 	}
 }
 
@@ -411,6 +530,7 @@ func printInteractiveHelp() {
 ║  /rag              Show RAG status               ║
 ║  /index <dir>      Index a directory             ║
 ║  /search <query>   Search documents              ║
+║  /summarize <query> Summarize results            ║
 ║  /tokens           Token tracking                 ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  Just type your message and press Enter!        ║
