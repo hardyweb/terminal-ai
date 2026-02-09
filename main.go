@@ -453,6 +453,8 @@ func main() {
 		handleMemoryCommand()
 	case "interactive", "chat-i", "interactive-mode":
 		HandleInteractiveChat()
+	case "telegram":
+		handleTelegramCommand()
 	case "--help", "-h":
 		showHelp()
 	default:
@@ -3005,4 +3007,73 @@ func showHelp() {
 	fmt.Println("  - If streaming times out, partial response is still saved")
 	fmt.Println("  - Use faster providers (groq) for quicker responses")
 	fmt.Println("  - Use memory to remember important information across sessions")
+}
+
+func handleTelegramCommand() {
+	if len(os.Args) < 3 {
+		showTelegramHelp()
+		os.Exit(0)
+	}
+
+	subCmd := os.Args[2]
+
+	switch subCmd {
+	case "start":
+		err := initTelegramBot()
+		if err != nil {
+			fmt.Printf("❌ Failed to initialize Telegram bot: %v\n", err)
+			os.Exit(1)
+		}
+		err = startTelegramBot()
+		if err != nil {
+			fmt.Printf("❌ Failed to start Telegram bot: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("✅ Telegram bot started (long polling mode)")
+		fmt.Println("Press Ctrl+C to stop")
+
+		select {}
+
+	case "webhook":
+		err := initTelegramBot()
+		if err != nil {
+			fmt.Printf("❌ Failed to initialize Telegram bot: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("✅ Telegram bot initialized for webhook mode")
+		fmt.Println("Webhook endpoint: /telegram/webhook")
+		fmt.Println("Note: Run web-server to handle webhook requests")
+
+	case "test":
+		token := os.Getenv("TELEGRAM_BOT_TOKEN")
+		if token == "" {
+			fmt.Println("❌ TELEGRAM_BOT_TOKEN not set")
+			os.Exit(1)
+		}
+		fmt.Println("✅ Telegram bot token configured")
+
+	default:
+		showTelegramHelp()
+	}
+}
+
+func showTelegramHelp() {
+	fmt.Println("Telegram Bot Commands:")
+	fmt.Println()
+	fmt.Println("  terminal-ai telegram start       - Start bot in polling mode")
+	fmt.Println("  terminal-ai telegram webhook      - Initialize bot for webhook mode")
+	fmt.Println("  terminal-ai telegram test         - Test bot configuration")
+	fmt.Println()
+	fmt.Println("Environment Variables:")
+	fmt.Println("  TELEGRAM_BOT_TOKEN      - Bot API token from @BotFather")
+	fmt.Println("  TELEGRAM_WEBHOOK_URL    - Full URL for webhook (for webhook mode)")
+	fmt.Println("  TELEGRAM_ALLOWED_USERS  - Comma-separated user IDs (optional)")
+	fmt.Println()
+	fmt.Println("Examples:")
+	fmt.Println("  export TELEGRAM_BOT_TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11")
+	fmt.Println("  terminal-ai telegram start")
+	fmt.Println()
+	fmt.Println("For webhook mode, also set:")
+	fmt.Println("  export TELEGRAM_WEBHOOK_URL=https://your-domain.com")
+	fmt.Println("  terminal-ai telegram webhook")
 }

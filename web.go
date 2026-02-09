@@ -114,6 +114,8 @@ func startWebServer() {
 	router.HandleFunc("/api/providers/openrouter/byok", authenticate(handleGetBYOKConfig)).Methods("GET")
 	router.HandleFunc("/api/providers/openrouter/byok", authenticate(handleUpdateBYOKConfig)).Methods("PUT")
 	router.HandleFunc("/api/providers/openrouter/byok/test", authenticate(handleTestBYOK)).Methods("POST")
+	// Telegram Bot webhook
+	router.HandleFunc("/telegram/webhook", handleTelegramWebhook).Methods("POST", "GET")
 	router.HandleFunc("/health", handleHealth).Methods("GET")
 
 	corsMiddleware := func(next http.Handler) http.Handler {
