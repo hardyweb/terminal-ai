@@ -1984,12 +1984,17 @@ func startREPLWithSession(session *ChatSession, initialMessage string) {
 		providerName = session.Provider
 	}
 
-	if initialMessage != "" && len(session.Messages) == 0 {
+	// Process initial message if provided
+	// Note: session.Messages already contains the user message from updateSession above
+	// We check if there's only 1 message (the user message we just added) and no assistant response yet
+	if initialMessage != "" && len(session.Messages) == 1 {
 		sessionWithHistory(session, providerName, initialMessage)
 	}
 
 	for {
+		fmt.Println() // Add newline to flush stdout
 		fmt.Print(providerConfig.Prompts.ContinuePrompt)
+		os.Stdout.Sync() // Force flush
 		reader := bufio.NewReader(os.Stdin)
 		answer, _ := reader.ReadString('\n')
 		answer = strings.TrimSpace(answer)
@@ -2099,9 +2104,9 @@ func sessionWithHistory(session *ChatSession, providerName, message string) {
 			if extractor := GetAutoMemoryExtractor(); extractor != nil {
 				fmt.Println("\n💾 Extracting important information...")
 				conversation := "User said: " + message + "\n\nAssistant responded: " + fullResponse
-				fmt.Printf("[DEBUG] Conversation length: %d\n", len(conversation))
+				// fmt.Printf("[DEBUG Conversation length: %d\n", len(conversation))
 				count := ExtractAndSaveMemories(conversation, session.ID)
-				fmt.Printf("[DEBUG] Extracted %d memories\n", count)
+				// fmt.Printf("[DEBUG Extracted %d memories\n", count)
 				if count > 0 {
 					fmt.Printf("✅ Saved %d memories\n", count)
 				}
@@ -2141,9 +2146,9 @@ func sessionWithHistory(session *ChatSession, providerName, message string) {
 			if extractor := GetAutoMemoryExtractor(); extractor != nil {
 				fmt.Println("\n💾 Extracting important information...")
 				conversation := "User said: " + message + "\n\nAssistant responded: " + response.Choices[0].Message.Content
-				fmt.Printf("[DEBUG] Conversation length: %d\n", len(conversation))
+				// fmt.Printf("[DEBUG Conversation length: %d\n", len(conversation))
 				count := ExtractAndSaveMemories(conversation, session.ID)
-				fmt.Printf("[DEBUG] Extracted %d memories\n", count)
+				// fmt.Printf("[DEBUG Extracted %d memories\n", count)
 				if count > 0 {
 					fmt.Printf("✅ Saved %d memories\n", count)
 				}
@@ -2328,13 +2333,13 @@ func chatWithAI(providerName, message string) {
 		}
 		fmt.Println("📝 Response (streaming):")
 
-		fmt.Fprintf(os.Stderr, "[DEBUG] chatWithAI: message = '%s', len = %d\n", message, len(message))
+		// fmt.Fprintf(os.Stderr, "[DEBUG chatWithAI: message = '%s', len = %d\n", message, len(message))
 
 		var fullResponse string
 		streamingErr = makeStreamingRequestWithCapture(provider.Endpoint, provider.APIKey, req, provider.Name, &fullResponse)
 		actualProvider = providerName
 
-		fmt.Fprintf(os.Stderr, "[DEBUG] chatWithAI: fullResponse len = %d, streamingErr = %v\n", len(fullResponse), streamingErr)
+		// fmt.Fprintf(os.Stderr, "[DEBUG chatWithAI: fullResponse len = %d, streamingErr = %v\n", len(fullResponse), streamingErr)
 
 		if streamingErr != nil {
 			fmt.Printf("\n❌ Streaming Error: %v\n", streamingErr)
@@ -2347,25 +2352,25 @@ func chatWithAI(providerName, message string) {
 			// Auto-extract dari EVERY conversation
 			if extractor := GetAutoMemoryExtractor(); extractor != nil {
 				fmt.Println("\n💾 Extracting important information...")
-				fmt.Printf("[DEBUG] message variable value: '%s'\n", message)
-				fmt.Printf("[DEBUG] message variable length: %d\n", len(message))
+				// fmt.Printf("[DEBUG message variable value: '%s'\n", message)
+				// fmt.Printf("[DEBUG message variable length: %d\n", len(message))
 				conversation := "User said: " + message + "\n\nAssistant responded: " + fullResponse
-				fmt.Printf("[DEBUG] fullResponse variable length: %d\n", len(fullResponse))
-				fmt.Printf("[DEBUG] Conversation length: %d\n", len(conversation))
-				fmt.Printf("[DEBUG] Full response length: %d\n", len(fullResponse))
-				fmt.Printf("[DEBUG] Conversation length: %d\n", len(conversation))
+				// fmt.Printf("[DEBUG fullResponse variable length: %d\n", len(fullResponse))
+				// fmt.Printf("[DEBUG Conversation length: %d\n", len(conversation))
+				// fmt.Printf("[DEBUG Full response length: %d\n", len(fullResponse))
+				// fmt.Printf("[DEBUG Conversation length: %d\n", len(conversation))
 				if len(message) > 50 {
-					fmt.Printf("[DEBUG] Message: %s...\n", message[:50])
+					// fmt.Printf("[DEBUG Message: %s...\n", message[:50])
 				} else {
-					fmt.Printf("[DEBUG] Message: %s\n", message)
+					// fmt.Printf("[DEBUG Message: %s\n", message)
 				}
 				if len(fullResponse) > 50 {
-					fmt.Printf("[DEBUG] Full response: %s...\n", fullResponse[:50])
+					// fmt.Printf("[DEBUG Full response: %s...\n", fullResponse[:50])
 				} else {
-					fmt.Printf("[DEBUG] Full response: %s\n", fullResponse)
+					// fmt.Printf("[DEBUG Full response: %s\n", fullResponse)
 				}
 				count := ExtractAndSaveMemories(conversation, "")
-				fmt.Printf("[DEBUG] Extracted %d memories\n", count)
+				// fmt.Printf("[DEBUG Extracted %d memories\n", count)
 				if count > 0 {
 					fmt.Printf("✅ Saved %d memories\n", count)
 				}
@@ -2404,9 +2409,9 @@ func chatWithAI(providerName, message string) {
 			if extractor := GetAutoMemoryExtractor(); extractor != nil {
 				fmt.Println("\n💾 Extracting important information...")
 				conversation := "User said: " + message + "\n\nAssistant responded: " + response.Choices[0].Message.Content
-				fmt.Printf("[DEBUG] Conversation length: %d\n", len(conversation))
+				// fmt.Printf("[DEBUG Conversation length: %d\n", len(conversation))
 				count := ExtractAndSaveMemories(conversation, "")
-				fmt.Printf("[DEBUG] Extracted %d memories\n", count)
+				// fmt.Printf("[DEBUG Extracted %d memories\n", count)
 				if count > 0 {
 					fmt.Printf("✅ Saved %d memories\n", count)
 				}

@@ -143,7 +143,7 @@ Index dan cari nota-nota lokal anda dengan hybrid search (vector + keyword):
 ```bash
 # Enhanced RAG Commands
 ./terminal-ai rag add ~/Documents/notes          # Tambah direktori
-./terminal-ai rag add ~/Projects/docs --update    # Update (incremental)
+./terminal-ai rag add ~/Projects/docs             # Tambah multiple direktori
 ./terminal-ai rag list                            # Senarai sources
 ./terminal-ai rag status                          # Status index
 ./terminal-ai rag search "query"                  # Hybrid search
@@ -157,6 +157,19 @@ Index dan cari nota-nota lokal anda dengan hybrid search (vector + keyword):
 - 60% Vector similarity + 40% Keyword (BM25)
 - Semantic search + exact keyword matching
 - Top 20 results fused dan ranked
+
+**Progress Indicator:**
+Semasa indexing, progress bar akan tunjuk status:
+```
+➕ Incremental update for: ~/Documents/notes
+  ⠋ 15/65 chunks (23%)
+```
+
+**Optimized for Low RAM Systems:**
+- Chunk size: 500 karakter (default) - boleh tukar dalam config
+- Skip files >5MB automatically
+- Single worker untuk Ollama embeddings (tak overwhelm CPU)
+- Progress update setiap chunk
 
 **Incremental Updates:**
 - SHA-256 hash tracking untuk setiap file
@@ -217,9 +230,67 @@ Selepas mendapat respons, CLI akan tanya sama ada anda ingin teruskan perbualan:
 - Ulang langkah di atas untuk terus chat
 - Tekan `n` atau Enter kosong untuk keluar
 
+## Chat Session Management
+
+Manage chat sessions dengan persistent history:
+
+```bash
+# List semua chat sessions
+./terminal-ai chat --list
+
+# Start chat session baru (REPL mode)
+./terminal-ai chat --new
+
+# Start chat session baru dengan mesej awal
+./terminal-ai chat --new "Explain quantum computing"
+
+# Sambung session terakhir
+./terminal-ai chat --last
+
+# Sambung session terakhir dengan mesej
+./terminal-ai chat --last "Continue from where we left off"
+
+# Sambung session tertentu (guna ID dari --list)
+./terminal-ai chat --session <session-id>
+./terminal-ai chat --session abc123 "Hello again"
+```
+
+### Chat Session Features
+
+- **Persistent History:** Semua chat disimpan dan boleh disambung bila-bila masa
+- **Auto-Memory:** AI auto-extract dan simpan maklumat penting dari setiap perbualan (max 10 memories per chat)
+- **REPL Loop:** Setelah mesej pertama, anda boleh teruskan perbualan dalam interactive mode
+- **Multiple Sessions:** Boleh ada banyak chat sessions yang berbeza untuk topik berbeza
+
+### Chat Session Workflow
+
+```bash
+# 1. Start chat baru tentang projek
+./terminal-ai chat --new "Help me design a database schema for e-commerce"
+
+# 2. REPL loop akan bermula - boleh teruskan perbualan
+# 📝 Response (streaming):
+# [AI response appears here]
+# 
+# 💾 Extracting important information...
+# ✅ Saved 3 memories
+#
+# Do you want to continue? (y/n): y
+# You: What about payment integration?
+
+# 3. Keluar dengan 'n' atau Enter
+# Chat session saved: sess_abc123
+
+# 4. List sessions untuk cari session ID
+./terminal-ai chat --list
+
+# 5. Sambung session lain hari
+./terminal-ai chat --session sess_abc123 "Let's continue with the payment design"
+```
+
 ## Interactive Chat Mode
 
-Masuk ke mod chat berterusan secara langsung:
+Masuk ke mod chat berterusan secara langsung (tanpa save session):
 
 ```bash
 ./terminal-ai interactive
@@ -398,9 +469,14 @@ Web UI ada fitur timeout recovery untuk response panjang:
 
 # Enhanced RAG Commands
 ./terminal-ai rag add ~/projects/docs              # Tambah direktori
-./terminal-ai rag add ~/notes --update             # Update (incremental)
 ./terminal-ai rag search "API authentication"      # Hybrid search
 ./terminal-ai rag web https://example.com          # Index web page
+
+# Chat Session Management (Persistent Sessions)
+./terminal-ai chat --list                              # List semua sessions
+./terminal-ai chat --new "Help me with Python"        # Start session baru
+./terminal-ai chat --last                             # Sambung session terakhir
+./terminal-ai chat --session abc123 "Continue"       # Sambung session tertentu
 
 # Interactive Chat Mode dengan RAG
 ./terminal-ai interactive
@@ -486,6 +562,45 @@ Jika menggunakan setup manual (tanpa setup.sh), pastikan:
 - [ ] API keys telah dimasukkan dalam `.env`
 - [ ] Binary telah di-build: `go build -o terminal-ai .`
 
+### RAG Performance Issues (Low RAM Systems)
+
+**Indexing terlalu lambat atau hang:**
+
+```bash
+# Gunakan Ollama untuk embeddings secara local
+export USE_OLLAMA_EMBEDDINGS=true
+export OLLAMA_EMBEDDINGS_URL=http://localhost:11434/api/embeddings
+export OLLAMA_EMBEDDINGS_MODEL=nomic-embed-text
+
+# Start Ollama dengan model ringan
+ollama serve
+ollama pull nomic-embed-text
+
+# Kemudian index
+./terminal-ai rag add ~/documents
+```
+
+**Tips untuk low RAM:**
+- Chunk size default 500 karakter (lebih kecil = lebih laju)
+- Files >5MB akan di-skip automatik
+- Gunakan single worker (tak overwhelm CPU)
+- Progress akan tunjuk setiap chunk: `⠋ 15/65 chunks (23%)`
+
+### Chat --new Stuck After Memory Save
+
+**Masalah:** Lepas "Saved X memories", program nampak stuck
+
+**Sebenarnya:** Program tunggu input "Continue? (y/n):" tapi prompt tak display
+
+**Solution:**
+```bash
+# Taip 'n' dan Enter untuk exit
+# Atau taip 'y' untuk sambung chat
+
+# Jika nak terus exit selepas satu mesej:
+./terminal-ai "Your message"  # Guna tanpa --new
+```
+
 ## Memory System (ChatGPT-like Long-term Memory)
 
 Terminal AI CLI menyokong sistem memory yang mengecam, mencari, dan simpan maklumat penting dari perbualan anda secara automatik.
@@ -514,14 +629,21 @@ Terminal AI CLI menyokong sistem memory yang mengecam, mencari, dan simpan maklu
 
 ### Auto-Extraction (Otomatik)
 
-Setiap kali anda chat, AI akan auto-extract maklumat penting dari perbualan dan simpan sebagai memory:
+Setiap kali anda chat, AI akan auto-extract maklumat penting dari perbualan dan simpan sebagai memory (max 10 per chat untuk performance):
 
 ```bash
-echo "Saya kerja sebagai data scientist dan suka Python" | ./terminal-ai openrouter
+./terminal-ai chat --new "Saya kerja sebagai data scientist dan suka Python"
 # AI akan auto-simpan:
 # - Occupation: Data scientist
 # - Preference: Python programming language
 ```
+
+### Memory Features
+
+- **Smart Extraction:** AI extract hanya maklumat penting (personal info, preferences, project details)
+- **Deduplication:** Elak duplicate memories
+- **Limit:** Max 10 memories per chat extraction (elak overload)
+- **Fast Processing:** Optimized untuk low RAM systems
 
 ### Memory Encryption
 
@@ -534,7 +656,7 @@ Semua memories disulitkan dengan AES-256 encryption sebelum disimpan dalam vecto
 ./terminal-ai memory add "Saya alergic terhadap seafood"
 
 # 2. Chat seperti biasa - memories akan auto-extract
-echo "My name is Sarah" | ./terminal-ai openrouter
+./terminal-ai chat --new "My name is Sarah"
 
 # 3. Cuba recall
 ./terminal-ai memory recall "siapa nama saya"
@@ -791,3 +913,32 @@ INF Tunnel established at https://random-name.trycloudflare.com
 
 **Nota:** Cloudflare tunnel perlu running untuk akses remote. Auto-restart dengan systemd jika perlu.
 
+## Changelog
+
+### Latest
+
+**Fixed:**
+- Fixed RAG worker pool bug - chunks now distributed correctly instead of processing 4x redundantly
+- Fixed REPL loop stuck issue - stdout now flushes properly after memory extraction
+- Fixed memory extraction - now handles AI responses better and limits to 10 memories per chat
+
+**Added:**
+- RAG progress bar during indexing (`⠋ 15/65 chunks (23%)`)
+- Memory extraction optimization (max 10 memories, deduplication)
+- Low RAM optimizations (500 char chunks, skip files >5MB, single worker)
+- Better error handling for Ollama embeddings
+
+**Changed:**
+- Reduced default chunk size from 1000 to 500 characters for better performance
+- Increased Ollama timeout to 30 minutes for slow systems
+- Disabled debug output for cleaner UX
+
+### Previous
+
+- Chat session management (`chat --list`, `--new`, `--last`, `--session`)
+- Persistent chat sessions with auto-memory extraction
+- REPL mode for continuing conversations
+
+## License
+
+MIT License - Feel free to use and modify.
