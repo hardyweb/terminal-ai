@@ -96,13 +96,17 @@ func handleRAGAdd() {
 
 	fmt.Printf("%s Incremental update for: %s\n", UpdateIcon, strings.Join(dirs, ", "))
 
-	report, err := ragManager.IndexDirectories(dirs)
+	manager, _ := rag.NewRAGManager()
+	defer manager.Close()
+
+	_, err := manager.IndexDirectories(dirs)
 	if err != nil {
 		fmt.Printf("%s Error indexing: %v\n", CrossMark, err)
 		os.Exit(1)
 	}
 
-	printAddReport(report)
+	stats, _ := manager.GetStats()
+	fmt.Printf("\n%s Indexed: %d sources, %d chunks\n", CheckMark, stats.TotalSources, stats.TotalChunks)
 }
 
 func handleRAGWeb() {

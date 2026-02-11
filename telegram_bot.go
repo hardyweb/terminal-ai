@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -236,6 +237,24 @@ func (b *TelegramBot) handleCommand(chatID int64, text string, session *BotSessi
 
 	case "/userlist":
 		b.handleUserListCommand(chatID, session)
+
+	case "/htop":
+		b.handleHtopCommand(chatID)
+
+	case "/temp":
+		b.handleTempCommand(chatID)
+
+	case "/uptime":
+		b.handleUptimeCommand(chatID)
+
+	case "/disk":
+		b.handleDiskCommand(chatID)
+
+	case "/restart":
+		b.handleRestartCommand(chatID, args)
+
+	case "/services":
+		b.handleServicesCommand(chatID)
 
 	default:
 		if strings.HasPrefix(text, "/") {
@@ -725,7 +744,19 @@ func (b *TelegramBot) handleInteractiveMessage(chatID int64, text string, sessio
 	}
 
 	if text == "/help" {
-		b.sendMessage(chatID, "Interactive Mode Commands:\n\n/quit - Keluar\n/rag on/off - Toggle RAG\n/history - Lihat history\n/clear - Clear history")
+		b.sendMessage(chatID, "Interactive Mode Commands:\n\n/quit - Keluar\n/rag on/off - Toggle RAG\n/history - Lihat history\n/clear - Clear history\n\nAnda: ")
+		return
+	}
+
+	if text == "/history" {
+		b.showHistory(chatID, session)
+		b.sendMessage(chatID, "\nAnda: ")
+		return
+	}
+
+	if text == "/clear" {
+		b.clearSession(chatID, session)
+		b.sendMessage(chatID, "Session cleared.\n\nAnda: ")
 		return
 	}
 
@@ -888,6 +919,14 @@ Utility:
 /status - Show status
 /session info - Session info
 
+DevOps Commands:
+/htop - Show system processes
+/temp - Show system temperature
+/uptime - Show system uptime
+/disk - Show disk usage
+/services - List running services
+/restart <service> - Restart a service
+
 Admin Commands:
 /userinfo <id> - Maklumat user
 /allow <id> - Benarkan user
@@ -898,9 +937,9 @@ Examples:
 /chat Apa itu quantum computing?
 /rag search docker
 /provider set groq
-/allow 123456789
-`
-
+/restart nginx
+/htop
+ `
 	b.sendMessage(chatID, helpText)
 }
 
@@ -948,20 +987,6 @@ func handleTelegramWebhook(w http.ResponseWriter, r *http.Request) {
 	go telegramBot.handleUpdate(update)
 
 	w.WriteHeader(http.StatusOK)
-}
-
-func executeTelegramCommand(chatID int64, command string) string {
-	parts := strings.Fields(command)
-	if len(parts) == 0 {
-		return "Empty command"
-	}
-
-	cmd := exec.Command(parts[0], parts[1:]...)
-	output, err := cmd.Output()
-	if err != nil {
-		return fmt.Sprintf("Error: %v", err)
-	}
-	return string(output)
 }
 
 func startTelegramBot() error {
@@ -1188,4 +1213,139 @@ func loadAllowedUsers() {
 	}
 
 	allowedUsersStore = users
+}
+
+func (b *TelegramBot) handleHtopCommand(chatID int64) {
+	cpu := runCmd("cat /proc/stat | grep cpu | head -1 | awk '{print ($5*100)/($2+$3+$4+$5+$6+$7+$8+$9+$10+$11)}'")
+	mem := runCmd("free -m | awk 'NR==2{printf \"%.1f/%.1f GB\", $3/1024, $2/1024}'")
+	load := runCmd("awk '{print $1, $2, $3}' /proc/loadavg")
+	procs := runCmd("ls /proc | grep -c '^[0-9]$'")
+	uptime := runCmd("uptime -p 2>/dev/null || awk '{print $1}' /proc/uptime")
+	topProc := runCmd("ps -eo comm,pcpu --no-headers --sort=-pcpu | head -5 | awk '{printf \"%-20s %6.1f%%\\n\", $1, $2}'")
+
+	b.sendMessage(chatID, fmt.Sprintf(`🖥️ SYSTEM STATS
+
+CPU: %s | RAM: %s | Load: %s
+Processes: %s | Uptime: %s
+
+🔥 TOP PROCESSES
+%s`, cpu, mem, load, procs, uptime, topProc))
+}
+
+func runCmd(name string) string {
+	parts := strings.Fields(name)
+	if len(parts) == 0 {
+		return "N/A"
+	}
+	cmd := exec.Command(parts[0], parts[1:]...)
+	out, _ := cmd.CombinedOutput()
+	return strings.TrimSpace(string(out))
+}
+
+func (b *TelegramBot) handleTempCommand(chatID int64) {
+	output, err := executeCommand("sensors")
+	if err != nil {
+		b.sendMessage(chatID, fmt.Sprintf("Error reading temperature: %v", err))
+		return
+	}
+	if output == "" {
+		output, _ = executeCommand("cat /sys/class/thermal/thermal_zone*/temp")
+		if output != "" {
+			var sb strings.Builder
+			lines := strings.Split(output, "\n")
+			for _, line := range lines {
+				if strings.TrimSpace(line) == "" {
+					continue
+				}
+				temp, _ := strconv.ParseFloat(strings.TrimSpace(line), 64)
+				if temp > 0 {
+					sb.WriteString(fmt.Sprintf("Thermal Zone: %.1f°C\n", temp/1000))
+				}
+			}
+			output = sb.String()
+		}
+	}
+	if len(output) > 3800 {
+		output = output[:3800] + "\n... (truncated)"
+	}
+	b.sendMessage(chatID, fmt.Sprintf("🌡️ System Temperature:\n\n%s", output))
+}
+
+func (b *TelegramBot) handleUptimeCommand(chatID int64) {
+	output, err := executeCommand("uptime")
+	if err != nil {
+		b.sendMessage(chatID, fmt.Sprintf("Error reading uptime: %v", err))
+		return
+	}
+	b.sendMessage(chatID, fmt.Sprintf("⏱️ System Uptime:\n\n%s", output))
+}
+
+func (b *TelegramBot) handleDiskCommand(chatID int64) {
+	output, err := executeCommand("df -h")
+	if err != nil {
+		b.sendMessage(chatID, fmt.Sprintf("Error reading disk usage: %v", err))
+		return
+	}
+	if len(output) > 3800 {
+		output = output[:3800] + "\n... (truncated)"
+	}
+	b.sendMessage(chatID, fmt.Sprintf("💾 Disk Usage:\n\n%s", output))
+}
+
+func (b *TelegramBot) handleRestartCommand(chatID int64, args string) {
+	args = strings.TrimSpace(args)
+	args = strings.ToLower(args)
+
+	switch args {
+	case "nginx":
+		b.sendMessage(chatID, "🔄 Restarting nginx...")
+		output, err := executeCommand("sudo systemctl restart nginx")
+		if err != nil {
+			b.sendMessage(chatID, fmt.Sprintf("Error restarting nginx: %v\n%s", err, output))
+			return
+		}
+		b.sendMessage(chatID, "✅ Nginx restarted successfully!")
+
+	default:
+		if args == "" {
+			b.sendMessage(chatID, "Usage: /restart <service>\n\nContoh:\n/restart nginx\n/restart docker")
+			return
+		}
+		b.sendMessage(chatID, fmt.Sprintf("🔄 Restarting %s...", args))
+		output, err := executeCommand(fmt.Sprintf("sudo systemctl restart %s", args))
+		if err != nil {
+			b.sendMessage(chatID, fmt.Sprintf("Error restarting %s: %v\n%s", args, err, output))
+			return
+		}
+		b.sendMessage(chatID, fmt.Sprintf("✅ %s restarted successfully!", args))
+	}
+}
+
+func (b *TelegramBot) handleServicesCommand(chatID int64) {
+	output, err := executeCommand("systemctl list-units --type=service --state=running --no-pager")
+	if err != nil {
+		b.sendMessage(chatID, fmt.Sprintf("Error listing services: %v", err))
+		return
+	}
+	if len(output) > 3800 {
+		output = output[:3800] + "\n... (truncated)"
+	}
+	b.sendMessage(chatID, fmt.Sprintf("🔧 Running Services:\n\n%s", output))
+}
+
+func executeCommand(cmd string) (string, error) {
+	parts := strings.Fields(cmd)
+	if len(parts) == 0 {
+		return "", fmt.Errorf("empty command")
+	}
+
+	command := exec.Command(parts[0], parts[1:]...)
+	var stdout, stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	err := command.Run()
+	if err != nil {
+		return strings.TrimSpace(stderr.String()), err
+	}
+	return strings.TrimSpace(stdout.String()), nil
 }

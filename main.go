@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"terminal-ai/rag"
 )
 
 type AIProvider struct {
@@ -826,13 +827,33 @@ func searchRAGWithFilters(query, username, visibility string) []RAGDocument {
 	})
 
 	var results []RAGDocument
-	maxResults := 3
+	maxResults := 10
 	if len(scored) < maxResults {
 		maxResults = len(scored)
 	}
 
 	for i := 0; i < maxResults; i++ {
 		results = append(results, scored[i].doc)
+	}
+
+	return results
+}
+
+func searchRAGWithVectorStorage(query string) []rag.SearchResult {
+	if ragManager == nil {
+		if err := initRAGEnhanced(); err != nil {
+			return []rag.SearchResult{}
+		}
+	}
+
+	if ragManager == nil {
+		return []rag.SearchResult{}
+	}
+
+	ctx := context.Background()
+	results, err := ragManager.Search(ctx, query, 10)
+	if err != nil {
+		return []rag.SearchResult{}
 	}
 
 	return results
@@ -2007,15 +2028,19 @@ func sessionWithHistory(session *ChatSession, providerName, message string) {
 		}
 	}
 
-	results := searchRAGWithFilters(message, "user", "")
-	if len(results) > 0 {
-		context := "\n\nRelevant documents:\n"
-		for _, doc := range results {
+	ragResults := searchRAGWithVectorStorage(message)
+	if len(ragResults) > 0 {
+		context := "\n\n=== Relevant Documents (Vector Storage) ===\n"
+		for i, doc := range ragResults {
 			contentLen := len(doc.Content)
-			if contentLen > 200 {
-				contentLen = 200
+			if contentLen > 2000 {
+				contentLen = 2000
 			}
-			context += fmt.Sprintf("- %s: %s\n", doc.Path, doc.Content[:contentLen])
+			sourceName := doc.SourcePath
+			if doc.SourceType == "web" && doc.SourceURL != "" {
+				sourceName = doc.SourceURL
+			}
+			context += fmt.Sprintf("[%d] %s\n%s\n\n", i+1, sourceName, doc.Content[:contentLen])
 		}
 		finalMessage += context
 	}
@@ -2248,15 +2273,19 @@ func chatWithAI(providerName, message string) {
 		}
 	}
 
-	results := searchRAGWithFilters(message, "user", "")
-	if len(results) > 0 {
-		context := "\n\nRelevant documents:\n"
-		for _, doc := range results {
+	ragResults := searchRAGWithVectorStorage(message)
+	if len(ragResults) > 0 {
+		context := "\n\n=== Relevant Documents (Vector Storage) ===\n"
+		for i, doc := range ragResults {
 			contentLen := len(doc.Content)
-			if contentLen > 200 {
-				contentLen = 200
+			if contentLen > 2000 {
+				contentLen = 2000
 			}
-			context += fmt.Sprintf("- %s: %s\n", doc.Path, doc.Content[:contentLen])
+			sourceName := doc.SourcePath
+			if doc.SourceType == "web" && doc.SourceURL != "" {
+				sourceName = doc.SourceURL
+			}
+			context += fmt.Sprintf("[%d] %s\n%s\n\n", i+1, sourceName, doc.Content[:contentLen])
 		}
 		finalMessage += context
 	}
@@ -2945,74 +2974,28 @@ func handleMemoryCommand() {
 }
 
 func showHelp() {
-	fmt.Println("Terminal AI CLI - AI Assistant with Web, Skills, RAG, Memory & Chat History")
+	fmt.Println("Terminal AI CLI")
 	fmt.Println()
 	fmt.Println("Usage:")
-	fmt.Println("  terminal-ai [provider] <message>       - Chat with AI")
-	fmt.Println("  terminal-ai [provider] --no-streaming <message>  - Chat without streaming")
-	fmt.Println("  terminal-ai interactive              - Start interactive chat mode")
-	fmt.Println("  terminal-ai chat --list/--new/--last/--session <id>  - Chat sessions")
-	fmt.Println("  terminal-ai history list/view/export/delete <id>/clear  - Chat history")
-	fmt.Println("  terminal-ai cmd list/search/recent/clear/dedup     - Command tracking")
-	fmt.Println("  terminal-ai config list/get/set/unset/reset  - Configuration")
-	fmt.Println("  terminal-ai rag index <dir> / search <query>  - Local RAG")
-	fmt.Println("  terminal-ai skill list/create <name>   - Custom skills")
-	fmt.Println("  terminal-ai user list/create/delete    - User management")
-	fmt.Println("  terminal-ai provider list/test/enable/disable/priority/add/default  - Provider config")
-	fmt.Println("  terminal-ai web <url> / web-server      - Web fetch & server")
-	fmt.Println("  terminal-ai memory add/recall/list/delete/consolidate - Long-term memory")
-	fmt.Println("  terminal-ai telegram start/webhook/test - Telegram bot")
-	fmt.Println("  terminal-ai start                     - Start ALL services (web + terminal + telegram)")
-	fmt.Println("  terminal-ai --help                    - Show this help")
-	fmt.Println()
-	fmt.Println("Interactive Mode:")
-	fmt.Println("  terminal-ai interactive              - Start REPL-style chat")
-	fmt.Println("  /quit   - Exit interactive mode")
-	fmt.Println("  /help   - Show commands")
-	fmt.Println("  /clear  - Clear screen")
-	fmt.Println("  /provider groq - Change provider")
-	fmt.Println()
-	fmt.Println("Chat History:")
-	fmt.Println("  terminal-ai history list               - List chat sessions")
-	fmt.Println("  terminal-ai history view <id>         - View a session")
-	fmt.Println("  terminal-ai history export <id>        - Export session")
-	fmt.Println("  terminal-ai history delete <id>        - Delete session")
-	fmt.Println()
-	fmt.Println("Command Tracking:")
-	fmt.Println("  terminal-ai cmd list                 - List all commands")
-	fmt.Println("  terminal-ai cmd search <prefix>        - Search commands")
-	fmt.Println("  terminal-ai cmd recent [count]        - Show recent commands")
-	fmt.Println("  terminal-ai cmd clear                  - Clear command history")
-	fmt.Println("  terminal-ai cmd dedup                  - Remove duplicates")
-	fmt.Println()
-	fmt.Println("Configuration:")
-	fmt.Println("  terminal-ai config list                - List all settings")
-	fmt.Println("  terminal-ai config get <key>           - Get a setting")
-	fmt.Println("  terminal-ai config set <key>=<value>   - Set a setting")
-	fmt.Println("  terminal-ai config unset <key>         - Unset a setting")
-	fmt.Println("  terminal-ai config reset               - Reset to defaults")
-	fmt.Println()
-	fmt.Println("Memory Commands:")
-	fmt.Println("  terminal-ai memory add <text>           - Save to long-term memory")
-	fmt.Println("  terminal-ai memory recall <query>       - Search memories")
-	fmt.Println("  terminal-ai memory list                 - List all memories")
-	fmt.Println("  terminal-ai memory list --tags <tag>    - List memories by tag")
-	fmt.Println("  terminal-ai memory delete <id>          - Delete a memory")
-	fmt.Println("  terminal-ai memory consolidate          - Clean up old/low-importance memories")
-	fmt.Println("  terminal-ai memory clear                - Delete ALL memories")
+	fmt.Println("  terminal-ai <message>              Chat with AI")
+	fmt.Println("  terminal-ai interactive            Interactive chat mode")
+	fmt.Println("  terminal-ai chat --list/--new     Manage chat sessions")
+	fmt.Println("  terminal-ai history                View chat history")
+	fmt.Println("  terminal-ai rag index <dir>        Index documents")
+	fmt.Println("  terminal-ai rag search <query>     Search documents")
+	fmt.Println("  terminal-ai memory add <text>      Save to memory")
+	fmt.Println("  terminal-ai memory recall <query>  Search memory")
+	fmt.Println("  terminal-ai config                Configure settings")
+	fmt.Println("  terminal-ai web <url>             Fetch web content")
+	fmt.Println("  terminal-ai web-server            Start web UI server")
+	fmt.Println("  terminal-ai start                 Start all services")
+	fmt.Println("  terminal-ai telegram               Telegram bot")
 	fmt.Println()
 	fmt.Println("Options:")
-	fmt.Println("  --no-streaming, -s    Disable streaming mode (wait for complete response)")
-	fmt.Println("  STREAMING=false       Environment variable to disable streaming")
+	fmt.Println("  --no-streaming    Disable streaming")
+	fmt.Println("  --provider <name> Use specific provider")
 	fmt.Println()
-	fmt.Println("Providers (default: openrouter):")
-	fmt.Println("  - openrouter (1) - gemini (2) - groq (3) - Custom BYOK (0+)")
-	fmt.Println()
-	fmt.Println("Tips for long responses:")
-	fmt.Println("  - Use --no-streaming for complete response at once")
-	fmt.Println("  - If streaming times out, partial response is still saved")
-	fmt.Println("  - Use faster providers (groq) for quicker responses")
-	fmt.Println("  - Use memory to remember important information across sessions")
+	fmt.Println("Providers: openrouter, groq, gemini")
 }
 
 func handleTelegramCommand() {

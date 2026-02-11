@@ -517,23 +517,15 @@ func printWelcomeBanner() {
 func printInteractiveHelp() {
 	help := `
 ╔═══════════════════════════════════════════════════════════════╗
-║                  Available Commands                 ║
+║  Commands                                      ║
 ╠═══════════════════════════════════════════════════════════════╣
-║  /help, ?          Show this help                ║
-║  /quit, /exit      Exit chat                     ║
-║  /clear            Clear screen                   ║
-║  /history          Show chat history             ║
-║  /stats            Session statistics             ║
-║  /provider <name>  Switch provider               ║
-║  /model <name>     Set model                     ║
-║  /rag on|off       Enable/disable RAG            ║
-║  /rag              Show RAG status               ║
-║  /index <dir>      Index a directory             ║
-║  /search <query>   Search documents              ║
-║  /summarize <query> Summarize results            ║
-║  /tokens           Token tracking                 ║
-╠═══════════════════════════════════════════════════════════════╣
-║  Just type your message and press Enter!        ║
+║  /help, ?          Show this help              ║
+║  /quit, /exit      Exit chat                   ║
+║  /clear            Clear screen                 ║
+║  /history          Chat history                 ║
+║  /provider <name>  Switch AI provider          ║
+║  /rag on|off       Toggle RAG                  ║
+║  /search <query>   Search documents            ║
 ╚═══════════════════════════════════════════════════════════════╝`
 	fmt.Println(help)
 }

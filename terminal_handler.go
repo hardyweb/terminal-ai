@@ -79,20 +79,26 @@ var (
 func handleTerminalWebSocket(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	if token == "" {
+		fmt.Printf("TERMINAL WS: No token provided, IP: %s\n", r.RemoteAddr)
 		http.Error(w, "Token required", http.StatusUnauthorized)
 		return
 	}
 
+	fmt.Printf("TERMINAL WS: Token received: %s...\n", token[:20])
 	username, err := securityMgr.ValidateSession(token)
 	if err != nil {
+		fmt.Printf("TERMINAL WS: Token validation failed: %v\n", err)
 		http.Error(w, "Invalid token", http.StatusUnauthorized)
 		return
 	}
+	fmt.Printf("TERMINAL WS: Authenticated user: %s\n", username)
 
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
+		fmt.Printf("TERMINAL WS: WebSocket upgrade failed: %v\n", err)
 		return
 	}
+	fmt.Printf("TERMINAL WS: WebSocket connected for user: %s\n", username)
 
 	session := &TerminalSession{
 		ID:         uuid.New().String()[:8],

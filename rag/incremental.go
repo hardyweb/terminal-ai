@@ -227,7 +227,13 @@ func (u *IncrementalUpdater) ProcessFile(filePath string) ([]Chunk, error) {
 	return chunks, nil
 }
 
+type ProgressCallback func(sourcePath string, current int, total int)
+
 func (u *IncrementalUpdater) UpdateIndex(dirs []string, indexer func([]Chunk, string) error) (*UpdateReport, error) {
+	return u.UpdateIndexWithProgress(dirs, indexer, nil)
+}
+
+func (u *IncrementalUpdater) UpdateIndexWithProgress(dirs []string, indexer func([]Chunk, string) error, progress ProgressCallback) (*UpdateReport, error) {
 	startTime := time.Now()
 
 	manifest, err := u.LoadManifest()
@@ -254,6 +260,9 @@ func (u *IncrementalUpdater) UpdateIndex(dirs []string, indexer func([]Chunk, st
 		allUnchangedSources = append(allUnchangedSources, unchangedSources...)
 	}
 
+	totalToProcess := len(allNewSources) + len(allChangedSources)
+	currentProcessed := 0
+
 	for _, source := range allChangedSources {
 		if len(source.ChunkIDs) > 0 {
 			for _, chunkID := range source.ChunkIDs {
@@ -264,6 +273,11 @@ func (u *IncrementalUpdater) UpdateIndex(dirs []string, indexer func([]Chunk, st
 
 	totalNewChunks := 0
 	for _, source := range allNewSources {
+		currentProcessed++
+		if progress != nil {
+			progress(source.Path, currentProcessed, totalToProcess)
+		}
+
 		chunks, err := u.ProcessFile(source.Path)
 		if err != nil {
 			report.Errors++
@@ -273,6 +287,10 @@ func (u *IncrementalUpdater) UpdateIndex(dirs []string, indexer func([]Chunk, st
 				Error:  err.Error(),
 			})
 			continue
+		}
+
+		if err := indexer(chunks, source.Path); err != nil {
+			fmt.Fprintf(os.Stderr, "[ERROR] Failed to index chunks: %v\n", err)
 		}
 
 		var chunkIDs []string
@@ -298,6 +316,11 @@ func (u *IncrementalUpdater) UpdateIndex(dirs []string, indexer func([]Chunk, st
 	}
 
 	for _, source := range allChangedSources {
+		currentProcessed++
+		if progress != nil {
+			progress(source.Path, currentProcessed, totalToProcess)
+		}
+
 		chunks, err := u.ProcessFile(source.Path)
 		if err != nil {
 			report.Errors++
@@ -307,6 +330,10 @@ func (u *IncrementalUpdater) UpdateIndex(dirs []string, indexer func([]Chunk, st
 				Error:  err.Error(),
 			})
 			continue
+		}
+
+		if err := indexer(chunks, source.Path); err != nil {
+			fmt.Fprintf(os.Stderr, "[ERROR] Failed to index chunks: %v\n", err)
 		}
 
 		var chunkIDs []string

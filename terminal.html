@@ -348,22 +348,33 @@
             }
 
             errorEl.textContent = 'Connecting...';
+            console.log('Attempting login for user:', username);
+            console.log('Fetch URL:', '/api/login');
 
             try {
-                const response = await fetch('/api/login', {
+                const apiUrl = window.location.origin + '/api/login';
+                console.log('Fetch URL:', apiUrl);
+                const response = await fetch(apiUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ username, password })
                 });
 
+                console.log('Response status:', response.status);
+                console.log('Response ok:', response.ok);
+
                 if (!response.ok) {
-                    throw new Error('Invalid credentials');
+                    const errorText = await response.text();
+                    console.log('Error response:', errorText);
+                    throw new Error('Invalid credentials: ' + response.status);
                 }
 
                 const data = await response.json();
+                console.log('Login successful, token received:', data.token ? 'yes' : 'no');
                 document.getElementById('loginModal').classList.add('hidden');
                 connectWebSocket(data.token);
             } catch (err) {
+                console.error('Login error:', err);
                 errorEl.textContent = 'Login failed: ' + err.message;
             }
         }

@@ -116,9 +116,9 @@ func startWebServer() {
 	router.HandleFunc("/api/providers/openrouter/byok/test", authenticate(handleTestBYOK)).Methods("POST")
 	// Telegram Bot webhook
 	router.HandleFunc("/telegram/webhook", handleTelegramWebhook).Methods("POST", "GET")
-	// Terminal WebSocket
+	// Terminal WebSocket - handleTerminalWebSocket validates token via query param
 	router.HandleFunc("/terminal", serveTerminalPage).Methods("GET")
-	router.HandleFunc("/api/terminal/ws", authenticate(handleTerminalWebSocket)).Methods("GET")
+	router.HandleFunc("/api/terminal/ws", handleTerminalWebSocket).Methods("GET")
 	router.HandleFunc("/api/terminal/sessions", authenticate(handleListSessions)).Methods("GET")
 	router.HandleFunc("/health", handleHealth).Methods("GET")
 
@@ -238,16 +238,19 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 		messages = append(messages, Message{Role: "user", Content: req.Message})
 	}
 
-	username := r.Header.Get("X-Username")
-	results := searchRAGWithFilters(req.Message, username, "")
-	if len(results) > 0 {
-		context := "\n\nRelevant documents:\n"
-		for _, doc := range results {
+	ragResults := searchRAGWithVectorStorage(req.Message)
+	if len(ragResults) > 0 {
+		context := "\n\n=== Relevant Documents (Vector Storage) ===\n"
+		for i, doc := range ragResults {
 			contentLen := len(doc.Content)
-			if contentLen > 200 {
-				contentLen = 200
+			if contentLen > 2000 {
+				contentLen = 2000
 			}
-			context += fmt.Sprintf("- %s: %s\n", doc.Path, doc.Content[:contentLen])
+			sourceName := doc.SourcePath
+			if doc.SourceType == "web" && doc.SourceURL != "" {
+				sourceName = doc.SourceURL
+			}
+			context += fmt.Sprintf("[%d] %s\n%s\n\n", i+1, sourceName, doc.Content[:contentLen])
 		}
 		messages[len(messages)-1].Content += context
 	}
@@ -342,16 +345,19 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 		messages = append(messages, Message{Role: "user", Content: req.Message})
 	}
 
-	username := r.Header.Get("X-Username")
-	results := searchRAGWithFilters(req.Message, username, "")
-	if len(results) > 0 {
-		context := "\n\nRelevant documents:\n"
-		for _, doc := range results {
+	ragResults := searchRAGWithVectorStorage(req.Message)
+	if len(ragResults) > 0 {
+		context := "\n\n=== Relevant Documents (Vector Storage) ===\n"
+		for i, doc := range ragResults {
 			contentLen := len(doc.Content)
-			if contentLen > 200 {
-				contentLen = 200
+			if contentLen > 2000 {
+				contentLen = 2000
 			}
-			context += fmt.Sprintf("- %s: %s\n", doc.Path, doc.Content[:contentLen])
+			sourceName := doc.SourcePath
+			if doc.SourceType == "web" && doc.SourceURL != "" {
+				sourceName = doc.SourceURL
+			}
+			context += fmt.Sprintf("[%d] %s\n%s\n\n", i+1, sourceName, doc.Content[:contentLen])
 		}
 		messages[len(messages)-1].Content += context
 	}
@@ -616,15 +622,19 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	messages := []Message{{Role: "user", Content: req.Message}}
 
-	results := searchRAGWithFilters(req.Message, username, "")
-	if len(results) > 0 {
-		context := "\n\nRelevant documents:\n"
-		for _, doc := range results {
+	ragResults := searchRAGWithVectorStorage(req.Message)
+	if len(ragResults) > 0 {
+		context := "\n\n=== Relevant Documents (Vector Storage) ===\n"
+		for i, doc := range ragResults {
 			contentLen := len(doc.Content)
-			if contentLen > 200 {
-				contentLen = 200
+			if contentLen > 2000 {
+				contentLen = 2000
 			}
-			context += fmt.Sprintf("- %s: %s\n", doc.Path, doc.Content[:contentLen])
+			sourceName := doc.SourcePath
+			if doc.SourceType == "web" && doc.SourceURL != "" {
+				sourceName = doc.SourceURL
+			}
+			context += fmt.Sprintf("[%d] %s\n%s\n\n", i+1, sourceName, doc.Content[:contentLen])
 		}
 		messages[0].Content += context
 	}
@@ -720,15 +730,19 @@ func handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	results := searchRAGWithFilters(req.Message, username, "")
-	if len(results) > 0 {
-		context := "\n\nRelevant documents:\n"
-		for _, doc := range results {
+	ragResults := searchRAGWithVectorStorage(req.Message)
+	if len(ragResults) > 0 {
+		context := "\n\n=== Relevant Documents (Vector Storage) ===\n"
+		for i, doc := range ragResults {
 			contentLen := len(doc.Content)
-			if contentLen > 200 {
-				contentLen = 200
+			if contentLen > 2000 {
+				contentLen = 2000
 			}
-			context += fmt.Sprintf("- %s: %s\n", doc.Path, doc.Content[:contentLen])
+			sourceName := doc.SourcePath
+			if doc.SourceType == "web" && doc.SourceURL != "" {
+				sourceName = doc.SourceURL
+			}
+			context += fmt.Sprintf("[%d] %s\n%s\n\n", i+1, sourceName, doc.Content[:contentLen])
 		}
 		messages[len(messages)-1].Content += context
 	}
@@ -1092,15 +1106,19 @@ func handlePublicChat(w http.ResponseWriter, r *http.Request) {
 		messages = append(messages, Message{Role: "user", Content: req.Message})
 	}
 
-	results := searchRAGWithFilters(req.Message, "", "public")
-	if len(results) > 0 {
-		context := "\n\nRelevant documents:\n"
-		for _, doc := range results {
+	ragResults := searchRAGWithVectorStorage(req.Message)
+	if len(ragResults) > 0 {
+		context := "\n\n=== Relevant Documents (Vector Storage) ===\n"
+		for i, doc := range ragResults {
 			contentLen := len(doc.Content)
-			if contentLen > 200 {
-				contentLen = 200
+			if contentLen > 2000 {
+				contentLen = 2000
 			}
-			context += fmt.Sprintf("- %s: %s\n", doc.Path, doc.Content[:contentLen])
+			sourceName := doc.SourcePath
+			if doc.SourceType == "web" && doc.SourceURL != "" {
+				sourceName = doc.SourceURL
+			}
+			context += fmt.Sprintf("[%d] %s\n%s\n\n", i+1, sourceName, doc.Content[:contentLen])
 		}
 		messages[len(messages)-1].Content += context
 	}

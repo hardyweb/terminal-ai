@@ -1,11 +1,16 @@
 package rag
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/philippgille/chromem-go"
@@ -16,6 +21,158 @@ const (
 	MemoryDBFileName     = "memory.db"
 	MemoryCollectionName = "memories"
 )
+
+const (
+	OpenRouterEmbeddingsURL = "https://openrouter.ai/api/v1/embeddings"
+	OllamaEmbeddingsURL     = "http://localhost:11434/api/embeddings"
+)
+
+type EmbeddingService struct {
+	apiURL    string
+	model     string
+	timeout   time.Duration
+	useOllama bool
+}
+
+func NewEmbeddingService() *EmbeddingService {
+	useOllama := os.Getenv("USE_OLLAMA_EMBEDDINGS") == "true"
+	ollamaURL := os.Getenv("OLLAMA_EMBEDDINGS_URL")
+
+	if useOllama && ollamaURL != "" {
+		return &EmbeddingService{
+			apiURL:    ollamaURL,
+			model:     os.Getenv("OLLAMA_EMBEDDINGS_MODEL"),
+			timeout:   120 * time.Second,
+			useOllama: true,
+		}
+	}
+
+	return &EmbeddingService{
+		apiURL:    OpenRouterEmbeddingsURL,
+		model:     "text-embedding-3-small",
+		timeout:   60 * time.Second,
+		useOllama: false,
+	}
+}
+
+func (e *EmbeddingService) GenerateEmbedding(ctx context.Context, text string) ([]float32, error) {
+	if e.useOllama {
+		return e.generateOllamaEmbedding(ctx, text)
+	}
+	return e.generateOpenRouterEmbedding(ctx, text)
+}
+
+func (e *EmbeddingService) generateOllamaEmbedding(ctx context.Context, text string) ([]float32, error) {
+	payload := map[string]interface{}{
+		"model":  e.model,
+		"prompt": text,
+		"stream": false,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", e.apiURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: e.timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call Ollama embedding API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	bodyResp, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("Ollama embedding API returned status %d: %s", resp.StatusCode, string(bodyResp))
+	}
+
+	var result struct {
+		Embedding []float32 `json:"embedding"`
+	}
+	if err := json.Unmarshal(bodyResp, &result); err != nil {
+		return nil, fmt.Errorf("failed to decode embeddings: %w", err)
+	}
+
+	if len(result.Embedding) == 0 {
+		return nil, fmt.Errorf("no embeddings returned from Ollama")
+	}
+
+	return result.Embedding, nil
+}
+
+func (e *EmbeddingService) generateOpenRouterEmbedding(ctx context.Context, text string) ([]float32, error) {
+	payload := map[string]interface{}{
+		"model": e.model,
+		"input": []string{text},
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", e.apiURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	apiKey := os.Getenv("OPENROUTER_API_KEY")
+	if apiKey == "" {
+		return nil, fmt.Errorf("OPENROUTER_API_KEY not set")
+	}
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		return nil, fmt.Errorf("OPENROUTER_API_KEY is empty")
+	}
+
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("HTTP-Referer", "https://github.com/user/terminal-ai")
+	req.Header.Set("X-Title", "Terminal AI")
+
+	client := &http.Client{Timeout: 120 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call embedding API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	bodyResp, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("embedding API returned status %d: %s", resp.StatusCode, string(bodyResp))
+	}
+
+	var result struct {
+		Data []struct {
+			Embedding []float32 `json:"embedding"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(bodyResp, &result); err != nil {
+		return nil, fmt.Errorf("failed to decode embeddings: %w", err)
+	}
+
+	if len(result.Data) == 0 || len(result.Data[0].Embedding) == 0 {
+		return nil, fmt.Errorf("no embeddings returned")
+	}
+
+	return result.Data[0].Embedding, nil
+}
 
 type RAGConfig struct {
 	DataDir       string
@@ -43,6 +200,7 @@ type RAGManager struct {
 	collection  *chromem.Collection
 	incremental *IncrementalUpdater
 	chunker     *Chunker
+	embeddings  *EmbeddingService
 	initialized bool
 }
 
@@ -108,6 +266,7 @@ func NewRAGManagerWithDataDir(dataDir string) (*RAGManager, error) {
 		collection:  collection,
 		incremental: incremental,
 		chunker:     NewChunker(),
+		embeddings:  NewEmbeddingService(),
 		initialized: true,
 	}
 
@@ -147,28 +306,72 @@ func (m *RAGManager) IndexDirectories(dirs []string) (*UpdateReport, error) {
 func (m *RAGManager) indexChunks(chunks []Chunk) error {
 	ctx := context.Background()
 
-	for _, chunk := range chunks {
-		docMetadata := map[string]string{
-			"source_path":  chunk.SourcePath,
-			"source_type":  chunk.SourceType,
-			"chunk_index":  fmt.Sprintf("%d", chunk.ChunkIndex),
-			"total_chunks": fmt.Sprintf("%d", chunk.TotalChunks),
-			"created_at":   chunk.CreatedAt.Format(time.RFC3339),
-			"content_hash": chunk.ID,
+	if m.embeddings == nil {
+		m.embeddings = NewEmbeddingService()
+	}
+
+	type result struct {
+		chunk     Chunk
+		embedding []float32
+		err       error
+	}
+
+	results := make(chan result, len(chunks))
+	var wg sync.WaitGroup
+
+	numWorkers := 4
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for _, chunk := range chunks {
+				embedding, err := m.embeddings.GenerateEmbedding(ctx, chunk.Content)
+				if err != nil {
+					results <- result{err: err}
+				} else {
+					results <- result{chunk: chunk, embedding: embedding}
+				}
+			}
+		}(i)
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	successCount := 0
+	errorCount := 0
+	for res := range results {
+		if res.err != nil {
+			errorCount++
+			continue
 		}
 
-		for key, val := range chunk.Metadata {
+		docMetadata := map[string]string{
+			"source_path":  res.chunk.SourcePath,
+			"source_type":  res.chunk.SourceType,
+			"chunk_index":  fmt.Sprintf("%d", res.chunk.ChunkIndex),
+			"total_chunks": fmt.Sprintf("%d", res.chunk.TotalChunks),
+			"created_at":   res.chunk.CreatedAt.Format(time.RFC3339),
+			"content_hash": res.chunk.ID,
+		}
+
+		for key, val := range res.chunk.Metadata {
 			docMetadata[key] = val
 		}
 
-		doc, err := chromem.NewDocument(ctx, chunk.ID, docMetadata, nil, chunk.Content, nil)
+		doc, err := chromem.NewDocument(ctx, res.chunk.ID, docMetadata, res.embedding, res.chunk.Content, nil)
 		if err != nil {
+			errorCount++
 			continue
 		}
 
 		if err := m.collection.AddDocument(ctx, doc); err != nil {
+			errorCount++
 			continue
 		}
+		successCount++
 	}
 
 	return nil
@@ -216,9 +419,45 @@ func (m *RAGManager) Search(ctx context.Context, query string, limit int) ([]Sea
 		return []SearchResult{}, nil
 	}
 
-	results, err := m.collection.Query(ctx, query, limit, nil, nil)
+	if m.embeddings == nil {
+		m.embeddings = NewEmbeddingService()
+	}
+
+	embedding, err := m.embeddings.GenerateEmbedding(ctx, query)
 	if err != nil {
-		return nil, err
+		results, err := m.collection.Query(ctx, query, limit, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		var searchResults []SearchResult
+		for _, result := range results {
+			chunk, err := LoadChunk(m.dataDir, result.ID)
+			if err != nil {
+				continue
+			}
+
+			searchResults = append(searchResults, SearchResult{
+				Chunk:       *chunk,
+				Content:     chunk.Content,
+				SourcePath:  chunk.SourcePath,
+				SourceURL:   chunk.SourceURL,
+				SourceType:  chunk.SourceType,
+				Similarity:  float64(result.Similarity),
+				ChunkIndex:  chunk.ChunkIndex,
+				TotalChunks: chunk.TotalChunks,
+			})
+		}
+
+		return searchResults, nil
+	}
+
+	results, err := m.collection.QueryEmbedding(ctx, embedding, limit, nil, nil)
+	if err != nil {
+		results, err = m.collection.Query(ctx, query, limit, nil, nil)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	var searchResults []SearchResult
