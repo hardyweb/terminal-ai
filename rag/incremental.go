@@ -150,6 +150,10 @@ func (u *IncrementalUpdater) ScanDirectory(dir string) ([]string, error) {
 		}
 
 		if lowerExt == "txt" || lowerExt == "md" || lowerExt == "json" || lowerExt == "yaml" || lowerExt == "yml" {
+			// Skip files larger than 5MB for low RAM systems
+			if info.Size() > 5*1024*1024 {
+				return nil
+			}
 			files = append(files, path)
 		}
 
@@ -274,6 +278,7 @@ func (u *IncrementalUpdater) UpdateIndexWithProgress(dirs []string, indexer func
 	totalNewChunks := 0
 	for _, source := range allNewSources {
 		currentProcessed++
+
 		if progress != nil {
 			progress(source.Path, currentProcessed, totalToProcess)
 		}

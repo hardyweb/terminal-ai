@@ -38,9 +38,9 @@ type Chunker struct {
 func NewChunker() *Chunker {
 	return &Chunker{
 		config: ChunkerConfig{
-			ChunkSize:     1000,
-			ChunkOverlap:  200,
-			MinChunkSize:  100,
+			ChunkSize:     500,
+			ChunkOverlap:  50,
+			MinChunkSize:  50,
 			SplitStrategy: "paragraph",
 		},
 	}

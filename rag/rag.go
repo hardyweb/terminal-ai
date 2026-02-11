@@ -42,7 +42,7 @@ func NewEmbeddingService() *EmbeddingService {
 		return &EmbeddingService{
 			apiURL:    ollamaURL,
 			model:     os.Getenv("OLLAMA_EMBEDDINGS_MODEL"),
-			timeout:   120 * time.Second,
+			timeout:   30 * time.Minute,
 			useOllama: true,
 		}
 	}
@@ -256,8 +256,8 @@ func NewRAGManagerWithDataDir(dataDir string) (*RAGManager, error) {
 	mgr := &RAGManager{
 		config: &RAGConfig{
 			DataDir:       dataDir,
-			ChunkSize:     1000,
-			ChunkOverlap:  200,
+			ChunkSize:     500,
+			ChunkOverlap:  50,
 			VectorWeight:  0.6,
 			KeywordWeight: 0.4,
 		},
@@ -288,13 +288,19 @@ func (m *RAGManager) IndexDirectory(dir string) (*UpdateReport, error) {
 	return m.IndexDirectories([]string{dir})
 }
 
+type ChunkProgressCallback func(current int, total int)
+
 func (m *RAGManager) IndexDirectories(dirs []string) (*UpdateReport, error) {
+	return m.IndexDirectoriesWithProgress(dirs, nil)
+}
+
+func (m *RAGManager) IndexDirectoriesWithProgress(dirs []string, chunkProgress ChunkProgressCallback) (*UpdateReport, error) {
 	if m.incremental == nil {
 		return nil, fmt.Errorf("incremental updater not initialized")
 	}
 
 	report, err := m.incremental.UpdateIndex(dirs, func(chunks []Chunk, sourcePath string) error {
-		return m.indexChunks(chunks)
+		return m.indexChunks(chunks, chunkProgress)
 	})
 	if err != nil {
 		return nil, err
@@ -303,7 +309,7 @@ func (m *RAGManager) IndexDirectories(dirs []string) (*UpdateReport, error) {
 	return report, nil
 }
 
-func (m *RAGManager) indexChunks(chunks []Chunk) error {
+func (m *RAGManager) indexChunks(chunks []Chunk, progress ChunkProgressCallback) error {
 	ctx := context.Background()
 
 	if m.embeddings == nil {
@@ -317,14 +323,21 @@ func (m *RAGManager) indexChunks(chunks []Chunk) error {
 	}
 
 	results := make(chan result, len(chunks))
+	chunkChan := make(chan Chunk, len(chunks))
 	var wg sync.WaitGroup
 
-	numWorkers := 4
+	// Send all chunks to the channel
+	for _, chunk := range chunks {
+		chunkChan <- chunk
+	}
+	close(chunkChan)
+
+	numWorkers := 1
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			for _, chunk := range chunks {
+			for chunk := range chunkChan {
 				embedding, err := m.embeddings.GenerateEmbedding(ctx, chunk.Content)
 				if err != nil {
 					results <- result{err: err}
@@ -342,9 +355,22 @@ func (m *RAGManager) indexChunks(chunks []Chunk) error {
 
 	successCount := 0
 	errorCount := 0
+	resultCount := 0
+	totalChunks := len(chunks)
 	for res := range results {
+		resultCount++
 		if res.err != nil {
 			errorCount++
+		} else {
+			successCount++
+		}
+
+		// Call progress callback every chunk
+		if progress != nil {
+			progress(resultCount, totalChunks)
+		}
+
+		if res.err != nil {
 			continue
 		}
 
@@ -371,7 +397,6 @@ func (m *RAGManager) indexChunks(chunks []Chunk) error {
 			errorCount++
 			continue
 		}
-		successCount++
 	}
 
 	return nil
@@ -383,7 +408,7 @@ func (m *RAGManager) AddSource(sourcePath string) error {
 		return err
 	}
 
-	return m.indexChunks(chunks)
+	return m.indexChunks(chunks, nil)
 }
 
 func (m *RAGManager) RemoveSource(sourcePath string) error {
@@ -606,7 +631,7 @@ func (m *RAGManager) MigrateLegacyIndex() error {
 			continue
 		}
 
-		m.indexChunks(chunks)
+		m.indexChunks(chunks, nil)
 	}
 
 	return nil

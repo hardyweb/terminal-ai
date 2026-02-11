@@ -99,9 +99,23 @@ func handleRAGAdd() {
 	manager, _ := rag.NewRAGManager()
 	defer manager.Close()
 
-	_, err := manager.IndexDirectories(dirs)
+	// Track total chunks for progress
+	totalChunks := 0
+	spinIndex := 0
+	spinChars := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+	progressCallback := func(current int, total int) {
+		if totalChunks == 0 {
+			totalChunks = total
+		}
+		spinIndex = (spinIndex + 1) % len(spinChars)
+		percent := float64(current) / float64(total) * 100
+		fmt.Printf("\r  %s %d/%d chunks (%.0f%%)", spinChars[spinIndex], current, total, percent)
+	}
+
+	_, err := manager.IndexDirectoriesWithProgress(dirs, progressCallback)
 	if err != nil {
-		fmt.Printf("%s Error indexing: %v\n", CrossMark, err)
+		fmt.Printf("\n%s Error indexing: %v\n", CrossMark, err)
 		os.Exit(1)
 	}
 
