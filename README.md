@@ -217,7 +217,8 @@ Contoh skill JSON (`~/.terminal-ai/skills/summarizer/skill.json`):
 
 ## Provider yang disokong
 
-- `openrouter` - OpenRouter API (default)
+- `9router` - 9Router (gateway AI tempatan, OpenAI-compatible, default `http://localhost:20128/v1`)
+- `openrouter` - OpenRouter API (default jika tiada 9router)
 - `gemini` - Google Gemini API
 - `groq` - Groq API
 
@@ -384,6 +385,11 @@ Contoh workflow:
 ## Environment Variables
 
 ```bash
+# 9Router (local, OpenAI-compatible)
+NINE_ROUTER_API_KEY=your_9router_api_key_here
+NINE_ROUTER_ENDPOINT=http://localhost:20128/v1/chat/completions
+NINE_ROUTER_MODEL=9router-combo
+
 OPENROUTER_API_KEY=your_key_here
 OPENROUTER_ENDPOINT=https://openrouter.ai/api/v1/chat/completions
 OPENROUTER_MODEL=meta-llama/llama-3.2-3b-instruct:free

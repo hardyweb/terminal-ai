@@ -226,7 +226,7 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if provider.APIKey == "" {
+	if provider.APIKey == "" && providerNeedsAPIKey(providerName) {
 		sendJSONError(w, http.StatusInternalServerError, "API key not configured")
 		return
 	}
@@ -330,7 +330,7 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if provider.APIKey == "" {
+	if provider.APIKey == "" && providerNeedsAPIKey(providerName) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
@@ -612,7 +612,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if provider.APIKey == "" {
+	if provider.APIKey == "" && providerNeedsAPIKey(providerName) {
 		sendJSONError(w, http.StatusInternalServerError, "API key not configured")
 		return
 	}
@@ -716,7 +716,7 @@ func handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if provider.APIKey == "" {
+	if provider.APIKey == "" && providerNeedsAPIKey(providerName) {
 		sendJSONError(w, http.StatusInternalServerError, "API key not configured")
 		return
 	}
@@ -1094,7 +1094,7 @@ func handlePublicChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if provider.APIKey == "" {
+	if provider.APIKey == "" && providerNeedsAPIKey(providerName) {
 		sendJSONError(w, http.StatusInternalServerError, "API key not configured")
 		return
 	}
@@ -1377,7 +1377,7 @@ func handleTestProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if provider.APIKey == "" {
+	if provider.APIKey == "" && providerNeedsAPIKey(providerName) {
 		sendJSONError(w, http.StatusInternalServerError, "API key not configured")
 		return
 	}

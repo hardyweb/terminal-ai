@@ -38,6 +38,7 @@ type AIProviderConfig struct {
 	EndpointKey string                `json:"endpoint_key"`
 	ModelKey    string                `json:"model_key"`
 	BYOK        bool                  `json:"byok"`
+	Local       bool                  `json:"local,omitempty"`
 	Description string                `json:"description"`
 	BYOKConfig  *OpenRouterBYOKConfig `json:"byok_config,omitempty"`
 }
@@ -228,7 +229,44 @@ func loadProviderConfig() error {
 		return err
 	}
 
+	ensureBuiltinProviders()
+
 	return nil
+}
+
+// ensureBuiltinProviders injects built-in providers (e.g. local 9Router)
+// into an existing providers.json so upgrades pick them up automatically.
+func ensureBuiltinProviders() {
+	if providerConfig.Providers == nil {
+		providerConfig.Providers = map[string]AIProviderConfig{}
+	}
+
+	if _, exists := providerConfig.Providers["9router"]; exists {
+		return
+	}
+
+	providerConfig.Providers["9router"] = AIProviderConfig{
+		Priority:    0,
+		Enabled:     true,
+		MaxRetries:  2,
+		GopassKey:   "terminal-ai/9router_api_key",
+		EnvKey:      "NINE_ROUTER_API_KEY",
+		EndpointKey: "NINE_ROUTER_ENDPOINT",
+		ModelKey:    "NINE_ROUTER_MODEL",
+		Local:       true,
+		Description: "Local 9Router OpenAI-compatible gateway",
+	}
+
+	saveProviderConfig()
+}
+
+// providerNeedsAPIKey reports whether a provider requires an API key.
+// Local gateways (9Router with REQUIRE_API_KEY=false) may run keyless.
+func providerNeedsAPIKey(name string) bool {
+	if cfg, ok := providerConfig.Providers[name]; ok {
+		return !cfg.Local
+	}
+	return true
 }
 
 func createDefaultProviderConfig(path string) error {
@@ -237,11 +275,22 @@ func createDefaultProviderConfig(path string) error {
 	os.MkdirAll(configPath, 0755)
 
 	defaultConfig := ProviderGlobalConfig{
-		DefaultProvider: "openrouter",
+		DefaultProvider: "9router",
 		FallbackEnabled: true,
 		RetryAttempts:   3,
 		RetryDelayMs:    1000,
 		Providers: map[string]AIProviderConfig{
+			"9router": {
+				Priority:    0,
+				Enabled:     true,
+				MaxRetries:  2,
+				GopassKey:   "terminal-ai/9router_api_key",
+				EnvKey:      "NINE_ROUTER_API_KEY",
+				EndpointKey: "NINE_ROUTER_ENDPOINT",
+				ModelKey:    "NINE_ROUTER_MODEL",
+				Local:       true,
+				Description: "Local 9Router OpenAI-compatible gateway",
+			},
 			"openrouter": {
 				Priority:    1,
 				Enabled:     true,
@@ -514,6 +563,22 @@ func initProviders() {
 			Endpoint: os.Getenv("GROQ_ENDPOINT"),
 			Model:    os.Getenv("GROQ_MODEL"),
 		},
+	}
+
+	// 9Router: local OpenAI-compatible gateway (default http://localhost:20128/v1)
+	nineRouterEndpoint := os.Getenv("NINE_ROUTER_ENDPOINT")
+	if nineRouterEndpoint == "" {
+		nineRouterEndpoint = "http://localhost:20128/v1/chat/completions"
+	}
+	nineRouterModel := os.Getenv("NINE_ROUTER_MODEL")
+	if nineRouterModel == "" {
+		nineRouterModel = "9router-combo"
+	}
+	providers["9router"] = AIProvider{
+		Name:     "9router",
+		APIKey:   getEnvOrGopass("NINE_ROUTER_API_KEY", "terminal-ai/9router_api_key"),
+		Endpoint: nineRouterEndpoint,
+		Model:    nineRouterModel,
 	}
 }
 
@@ -1136,7 +1201,7 @@ func testProvider(providerName string) {
 		return
 	}
 
-	if provider.APIKey == "" {
+	if provider.APIKey == "" && providerNeedsAPIKey(providerName) {
 		fmt.Printf("❌ No API key configured for %s\n", providerName)
 		return
 	}
@@ -2264,7 +2329,7 @@ func chatWithAI(providerName, message string) {
 		os.Exit(1)
 	}
 
-	if provider.APIKey == "" {
+	if provider.APIKey == "" && providerNeedsAPIKey(providerName) {
 		fmt.Printf("API key not configured for %s\n", providerName)
 		os.Exit(1)
 	}
@@ -2487,7 +2552,7 @@ func makeRequestWithFallback(endpoint, apiKey string, req Request, providerName 
 		}
 
 		provider := providers[providerName]
-		if provider.APIKey == "" {
+		if provider.APIKey == "" && providerNeedsAPIKey(providerName) {
 			fmt.Printf("⚠️  Provider '%s' has no API key, skipping...\n", providerName)
 			continue
 		}
@@ -2590,7 +2655,7 @@ func makeRequest(endpoint, apiKey string, req Request, provider string) (*Respon
 		httpReq.Header.Set("X-Title", "Terminal AI CLI")
 	} else if provider == "gemini" {
 		httpReq.Header.Set("x-goog-api-key", apiKey)
-	} else {
+	} else if apiKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
@@ -2740,7 +2805,7 @@ func makeStreamingRequest(endpoint, apiKey string, req Request, provider string)
 		httpReq.Header.Set("X-Title", "Terminal AI CLI")
 	} else if provider == "gemini" {
 		httpReq.Header.Set("x-goog-api-key", apiKey)
-	} else {
+	} else if apiKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
@@ -2775,7 +2840,7 @@ func makeStreamingRequestWithCapture(endpoint, apiKey string, req Request, provi
 		httpReq.Header.Set("X-Title", "Terminal AI CLI")
 	} else if provider == "gemini" {
 		httpReq.Header.Set("x-goog-api-key", apiKey)
-	} else {
+	} else if apiKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 

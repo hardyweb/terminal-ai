@@ -344,6 +344,8 @@ func streamAI(provider, message string, onChunk func(string), onComplete func())
 			providerCfg.Endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 		case "groq":
 			providerCfg.Endpoint = "https://api.groq.com/openai/v1/chat/completions"
+		case "9router":
+			providerCfg.Endpoint = "http://localhost:20128/v1/chat/completions"
 		}
 	}
 
@@ -355,10 +357,12 @@ func streamAI(provider, message string, onChunk func(string), onComplete func())
 			providerCfg.Model = "gemini-2.0-flash"
 		case "groq":
 			providerCfg.Model = "llama-3.3-70b-versatile"
+		case "9router":
+			providerCfg.Model = "9router-combo"
 		}
 	}
 
-	if providerCfg.APIKey == "" {
+	if providerCfg.APIKey == "" && providerNeedsAPIKey(provider) {
 		onChunk("Error: API key not configured.")
 		return
 	}
@@ -380,7 +384,7 @@ func streamAI(provider, message string, onChunk func(string), onComplete func())
 		req.Header.Set("X-Title", "Terminal AI CLI")
 	} else if provider == "gemini" {
 		req.Header.Set("x-goog-api-key", providerCfg.APIKey)
-	} else {
+	} else if providerCfg.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+providerCfg.APIKey)
 	}
 
